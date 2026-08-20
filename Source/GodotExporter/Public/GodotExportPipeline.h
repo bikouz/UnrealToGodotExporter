@@ -66,6 +66,7 @@ private:
 	void WriteGodotGltfImportFile(const FString& GltfAbsolutePath, class UObject* MeshObject = nullptr) const;
 	void GatherMaterialTextureResPaths(class UMaterialInterface* Material, TMap<FString, FString>& OutRoleToRes);
 	bool PatchGltfWithExternalTextures(const FString& GltfAbsolutePath, UObject* MeshObject);
+	bool PackGltfAndBinToGlb(const FString& GltfAbsolutePath, const FString& GlbAbsolutePath);
 	bool WriteProjectGodotIfNeeded() const;
 	void WriteManifest(const FGodotExportResult& Result) const;
 	bool ShouldSkipUnchanged(const FAssetData& AssetData, const FString& DestinationFile) const;

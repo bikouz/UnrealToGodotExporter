@@ -11,7 +11,7 @@ Deux modes :
 
 | Asset Unreal | Sortie Godot |
 |---|---|
-| Static Mesh, Skeletal Mesh | `.gltf` + `.bin` (géométrie) qui **référence** `textures/` + `.tres` |
+| Static Mesh, Skeletal Mesh | un `.glb` (géométrie, un seul fichier) qui **référence** `textures/` + `.tres` |
 | Level (`.umap`) | `.glb` dans `levels/` (scène glTF : meshes placés, lumières, caméras) |
 | AnimSequence (clic droit sur une seule anim) | un `.glb` d’animation, sans projet Godot (le menu reste « Export to Godot ») |
 | Texture2D | PNG (ou fichier source si encore disponible sur le disque) |
@@ -44,7 +44,7 @@ Un `project.godot` et un `godot_export_manifest.json` sont écrits **uniquement*
 
 ```text
 export/
-  meshes/      *.gltf + *.bin (static / skeletal, textures en référence)
+  meshes/      *.glb (static / skeletal, textures en référence, pas de .bin)
   anims/       *.glb (AnimSequence)
   levels/      *.glb (maps / .umap)
   materials/   *.tres
@@ -53,7 +53,7 @@ export/
 
 4. Glisse le dossier `export` à la racine du projet Godot. Les chemins `res://export/...` restent valides.
 
-Un mesh n’embarque **pas** les PNG (ça alourdirait le fichier). Le `.gltf` **pointe** vers `textures/`, donc le preview Godot les affiche. La scène utilise les `.tres` (`use_external`).
+Un mesh n’embarque **pas** les PNG (ça alourdirait le fichier). Le `.glb` contient la géométrie et **pointe** vers `textures/`, donc le preview Godot les affiche. Un seul fichier à déplacer (plus de `.bin` orphelin). La scène utilise les `.tres` (`use_external`).
 
 Les maps (`.umap` → `levels/`) restent un `.glb` de scène (lumières, placements) avec PBR baké.
 
