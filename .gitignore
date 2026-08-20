@@ -1,0 +1,33 @@
+# Build outputs
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+
+# Visual Studio / compiler
+*.pdb
+*.exp
+*.ilk
+*.obj
+*.lib
+*.dll
+*.so
+*.dylib
+*.sarif
+
+# IDE
+.vs/
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+*.suo
+*.user
+*.opendb
+*.VC.db
+*.code-workspace
+
+# OS
+Thumbs.db
+.DS_Store
+Desktop.ini
