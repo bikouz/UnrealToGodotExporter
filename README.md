@@ -6,13 +6,13 @@ Plugin éditeur Unreal Engine 5.7 qui exporte automatiquement des assets Unreal 
 
 Deux modes :
 
-- **Tools → Godot Exporter** : écrit dans le projet Godot, sous `export/meshes|anims|materials|textures`.
+- **Tools → Godot Exporter** : écrit dans le projet Godot, sous `export/meshes|anims|levels|materials|textures`.
 - **Clic droit → Export to Godot** : choisit un dossier, crée `export/` avec ces sous-dossiers (à glisser dans Godot). Pas de `project.godot`. Seuls le mesh choisi et ses matériaux / textures **assignés** sont exportés.
 
 | Asset Unreal | Sortie Godot |
 |---|---|
-| Static Mesh, Skeletal Mesh | `.glb` avec matériaux PBR bakés + `.png` / `.tres` à côté |
-| Level | `.glb` (ou `.gltf`) |
+| Static Mesh, Skeletal Mesh | `.gltf` + `.bin` (géométrie) qui **référence** `textures/` + `.tres` |
+| Level (`.umap`) | `.glb` dans `levels/` (scène glTF : meshes placés, lumières, caméras) |
 | AnimSequence (clic droit sur une seule anim) | un `.glb` d’animation, sans projet Godot (le menu reste « Export to Godot ») |
 | Texture2D | PNG (ou fichier source si encore disponible sur le disque) |
 | Material / Material Instance | `StandardMaterial3D` `.tres` |
@@ -44,13 +44,18 @@ Un `project.godot` et un `godot_export_manifest.json` sont écrits **uniquement*
 
 ```text
 export/
-  meshes/      *.glb (static / skeletal)
+  meshes/      *.gltf + *.bin (static / skeletal, textures en référence)
   anims/       *.glb (AnimSequence)
+  levels/      *.glb (maps / .umap)
   materials/   *.tres
   textures/    *.png
 ```
 
 4. Glisse le dossier `export` à la racine du projet Godot. Les chemins `res://export/...` restent valides.
+
+Un mesh n’embarque **pas** les PNG (ça alourdirait le fichier). Le `.gltf` **pointe** vers `textures/`, donc le preview Godot les affiche. La scène utilise les `.tres` (`use_external`).
+
+Les maps (`.umap` → `levels/`) restent un `.glb` de scène (lumières, placements) avec PBR baké.
 
 ### Ligne de commande
 

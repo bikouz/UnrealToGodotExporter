@@ -17,6 +17,7 @@
 #include "Exporters/GLTFExporter.h"
 #include "Framework/Application/SlateApplication.h"
 #include "GodotExportSettings.h"
+#include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
 #include "ImageCore.h"
 #include "ImageUtils.h"
@@ -26,6 +27,9 @@
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopedSlowTask.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "Options/GLTFExportOptions.h"
 #include "Sound/SoundWave.h"
 #include "UObject/Package.h"
@@ -148,6 +152,10 @@ namespace GodotExportPrivate
 		if (IsAnimSequenceAsset(Asset))
 		{
 			return TEXT("anims");
+		}
+		if (MatchesClass(Asset, UWorld::StaticClass()))
+		{
+			return TEXT("levels");
 		}
 		return TypeFolderForExtension(Extension);
 	}
@@ -559,9 +567,13 @@ FGodotExportResult FGodotExportPipeline::ExportAssets(
 
 FString FGodotExportPipeline::DefaultExtensionForAsset(const FAssetData& AssetData, const UGodotExportSettings* Settings)
 {
+	if (GodotExportPrivate::MatchesClass(AssetData, UStaticMesh::StaticClass())
+		|| GodotExportPrivate::MatchesClass(AssetData, USkeletalMesh::StaticClass()))
+	{
+		// Mesh files stay small and reference PNG in textures/ so Godot's import preview can show them.
+		return TEXT("gltf");
+	}
 	if (GodotExportPrivate::IsAnimSequenceAsset(AssetData)
-		|| GodotExportPrivate::MatchesClass(AssetData, UStaticMesh::StaticClass())
-		|| GodotExportPrivate::MatchesClass(AssetData, USkeletalMesh::StaticClass())
 		|| GodotExportPrivate::MatchesClass(AssetData, UWorld::StaticClass()))
 	{
 		return (Settings && !Settings->bUseBinaryGlb) ? TEXT("gltf") : TEXT("glb");
@@ -1012,6 +1024,7 @@ bool FGodotExportPipeline::ExportWithGltf(UObject* Object, const FString& Absolu
 	Options->bExportSourceModel = true;
 
 	const bool bAnimationOnly = Object->IsA<UAnimSequence>();
+	const bool bLevel = Object->IsA<UWorld>();
 	Options->bExportPreviewMesh = false;
 	if (bAnimationOnly)
 	{
@@ -1020,12 +1033,22 @@ bool FGodotExportPipeline::ExportWithGltf(UObject* Object, const FString& Absolu
 		Options->BakeMaterialInputs = EGLTFMaterialBakeMode::Disabled;
 		Options->TextureImageFormat = EGLTFTextureImageFormat::None;
 	}
-	else
+	else if (bLevel)
 	{
 		Options->bExportUnlitMaterials = true;
 		Options->bExportClearCoatMaterials = true;
 		Options->BakeMaterialInputs = EGLTFMaterialBakeMode::Simple;
 		Options->TextureImageFormat = EGLTFTextureImageFormat::PNG;
+	}
+	else
+	{
+		// Mesh: named material slots, no baked images. URIs to textures/ are patched after export.
+		Options->bExportCameras = false;
+		Options->bExportLights = false;
+		Options->bExportUnlitMaterials = false;
+		Options->bExportClearCoatMaterials = false;
+		Options->BakeMaterialInputs = EGLTFMaterialBakeMode::Disabled;
+		Options->TextureImageFormat = EGLTFTextureImageFormat::None;
 	}
 
 	FGLTFExportMessages Messages;
@@ -1093,6 +1116,326 @@ void FGodotExportPipeline::CleanupGltfImagesInMeshFolder(const FString& GltfAbso
 	}
 }
 
+void FGodotExportPipeline::WriteGodotGltfImportFile(const FString& GltfAbsolutePath, UObject* MeshObject) const
+{
+	const FString Ext = FPaths::GetExtension(GltfAbsolutePath, false).ToLower();
+	if (Ext != TEXT("glb") && Ext != TEXT("gltf"))
+	{
+		return;
+	}
+
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(GltfAbsolutePath), true);
+
+	const FString ResPath = GodotExportPrivate::ToResPathFromAbsolute(GodotProject, GltfAbsolutePath);
+	FString Contents;
+	Contents += TEXT("[remap]\n\n");
+	Contents += TEXT("importer=\"scene\"\n");
+	Contents += TEXT("type=\"PackedScene\"\n\n");
+	Contents += TEXT("[deps]\n\n");
+	Contents += FString::Printf(TEXT("source_file=\"%s\"\n\n"), *ResPath);
+	Contents += TEXT("[params]\n\n");
+	Contents += TEXT("gltf/naming_version=2\n");
+	Contents += TEXT("materials/extract=0\n");
+	if (MeshObject)
+	{
+		// Mesh glb has no images. 0 = DISCARD so Godot does not write PNGs in meshes/.
+		Contents += TEXT("gltf/embedded_image_handling=0\n");
+	}
+	else
+	{
+		// Level glb keeps baked PBR inside the file (3 = EMBED_AS_UNCOMPRESSED).
+		Contents += TEXT("gltf/embedded_image_handling=3\n");
+	}
+
+	TArray<UMaterialInterface*> Materials;
+	if (MeshObject)
+	{
+		CollectMeshMaterials(MeshObject, Materials);
+	}
+	if (Materials.Num() > 0)
+	{
+		Contents += TEXT("_subresources={\n");
+		Contents += TEXT("\"materials\": {\n");
+		for (int32 Index = 0; Index < Materials.Num(); ++Index)
+		{
+			UMaterialInterface* Material = Materials[Index];
+			if (!Material)
+			{
+				continue;
+			}
+
+			FString TresPath;
+			if (const FString* Existing = ExportedResPaths.Find(Material->GetOutermost()->GetFName()))
+			{
+				TresPath = *Existing;
+			}
+			else
+			{
+				TresPath = PackageToResPath(Material->GetOutermost()->GetName(), TEXT("tres"), Settings, FAssetData(Material));
+			}
+
+			const FString MatName = GodotExportPrivate::EscapeJson(Material->GetName());
+			const FString TresEscaped = GodotExportPrivate::EscapeJson(TresPath);
+			Contents += FString::Printf(TEXT("\"%s\": {\n"), *MatName);
+			Contents += TEXT("\"use_external/enabled\": true,\n");
+			Contents += FString::Printf(TEXT("\"use_external/path\": \"%s\"\n"), *TresEscaped);
+			Contents += (Index + 1 < Materials.Num()) ? TEXT("},\n") : TEXT("}\n");
+		}
+		Contents += TEXT("}\n");
+		Contents += TEXT("}\n");
+	}
+
+	FFileHelper::SaveStringToFile(Contents, *(GltfAbsolutePath + TEXT(".import")), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+}
+
+void FGodotExportPipeline::GatherMaterialTextureResPaths(UMaterialInterface* Material, TMap<FString, FString>& OutRoleToRes)
+{
+	if (!Material)
+	{
+		return;
+	}
+
+	auto RememberTexture = [this, &OutRoleToRes](const FString& HintName, UTexture* Texture)
+	{
+		if (!Texture || GodotExportPrivate::IsEngineTexture(Texture))
+		{
+			return;
+		}
+
+		FString Role = GodotExportPrivate::GuessTextureRole(HintName);
+		if (Role.IsEmpty())
+		{
+			Role = GodotExportPrivate::GuessTextureRole(Texture->GetName());
+		}
+		if (Role.IsEmpty() || OutRoleToRes.Contains(Role))
+		{
+			return;
+		}
+
+		FString ResPath;
+		if (const FString* Existing = ExportedResPaths.Find(Texture->GetOutermost()->GetFName()))
+		{
+			ResPath = *Existing;
+		}
+		else if (UTexture2D* Tex2D = Cast<UTexture2D>(Texture))
+		{
+			FGodotExportItemResult Nested;
+			const FAssetData NestedData(Tex2D);
+			if (ExportTexture(Tex2D, NestedData, Nested)
+				&& (Nested.Status == EGodotExportStatus::Succeeded || Nested.Status == EGodotExportStatus::Skipped))
+			{
+				ResPath = Nested.OutputPath;
+			}
+		}
+		if (!ResPath.IsEmpty())
+		{
+			OutRoleToRes.Add(Role, ResPath);
+		}
+	};
+
+	if (UMaterialInstance* Instance = Cast<UMaterialInstance>(Material))
+	{
+		for (const FTextureParameterValue& Param : Instance->TextureParameterValues)
+		{
+			RememberTexture(Param.ParameterInfo.Name.ToString(), Param.ParameterValue);
+		}
+	}
+	else
+	{
+		TArray<FMaterialParameterInfo> TextureInfos;
+		TArray<FGuid> TextureIds;
+		Material->GetAllTextureParameterInfo(TextureInfos, TextureIds);
+		for (const FMaterialParameterInfo& Info : TextureInfos)
+		{
+			UTexture* Texture = nullptr;
+			Material->GetTextureParameterValue(Info, Texture);
+			RememberTexture(Info.Name.ToString(), Texture);
+		}
+	}
+}
+
+bool FGodotExportPipeline::PatchGltfWithExternalTextures(const FString& GltfAbsolutePath, UObject* MeshObject)
+{
+	if (!MeshObject || !FPaths::FileExists(GltfAbsolutePath))
+	{
+		return false;
+	}
+	if (!FPaths::GetExtension(GltfAbsolutePath, false).Equals(TEXT("gltf"), ESearchCase::IgnoreCase))
+	{
+		return false;
+	}
+
+	FString JsonStr;
+	if (!FFileHelper::LoadFileToString(JsonStr, *GltfAbsolutePath))
+	{
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> Root;
+	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
+	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+	{
+		return false;
+	}
+
+	TArray<UMaterialInterface*> Materials;
+	CollectMeshMaterials(MeshObject, Materials);
+	if (Materials.Num() == 0)
+	{
+		return true;
+	}
+
+	TMap<FString, UMaterialInterface*> MatsByName;
+	for (UMaterialInterface* Material : Materials)
+	{
+		if (Material)
+		{
+			MatsByName.Add(Material->GetName(), Material);
+		}
+	}
+
+	TArray<TSharedPtr<FJsonValue>> Images;
+	TArray<TSharedPtr<FJsonValue>> Textures;
+	if (Root->HasTypedField<EJson::Array>(TEXT("images")))
+	{
+		Images = Root->GetArrayField(TEXT("images"));
+	}
+	if (Root->HasTypedField<EJson::Array>(TEXT("textures")))
+	{
+		Textures = Root->GetArrayField(TEXT("textures"));
+	}
+
+	auto ResPathToUri = [this, &GltfAbsolutePath](const FString& ResPath) -> FString
+	{
+		FString Relative = ResPath;
+		Relative.RemoveFromStart(TEXT("res://"));
+		const FString Absolute = FPaths::ConvertRelativePathToFull(FPaths::Combine(GodotProject, Relative));
+		FString Uri = Absolute;
+		FString Base = FPaths::GetPath(GltfAbsolutePath);
+		if (!Base.EndsWith(TEXT("/")) && !Base.EndsWith(TEXT("\\")))
+		{
+			Base += TEXT("/");
+		}
+		FPaths::MakePathRelativeTo(Uri, *Base);
+		Uri.ReplaceInline(TEXT("\\"), TEXT("/"));
+		return Uri;
+	};
+
+	auto AddImage = [&Images](const FString& Uri) -> int32
+	{
+		for (int32 Index = 0; Index < Images.Num(); ++Index)
+		{
+			const TSharedPtr<FJsonObject> Existing = Images[Index]->AsObject();
+			if (Existing.IsValid() && Existing->GetStringField(TEXT("uri")) == Uri)
+			{
+				return Index;
+			}
+		}
+		TSharedPtr<FJsonObject> Image = MakeShared<FJsonObject>();
+		Image->SetStringField(TEXT("uri"), Uri);
+		Images.Add(MakeShared<FJsonValueObject>(Image));
+		return Images.Num() - 1;
+	};
+
+	auto AddTexture = [&Textures](int32 ImageIndex) -> int32
+	{
+		for (int32 Index = 0; Index < Textures.Num(); ++Index)
+		{
+			const TSharedPtr<FJsonObject> Existing = Textures[Index]->AsObject();
+			if (Existing.IsValid() && static_cast<int32>(Existing->GetNumberField(TEXT("source"))) == ImageIndex)
+			{
+				return Index;
+			}
+		}
+		TSharedPtr<FJsonObject> Texture = MakeShared<FJsonObject>();
+		Texture->SetNumberField(TEXT("source"), ImageIndex);
+		Textures.Add(MakeShared<FJsonValueObject>(Texture));
+		return Textures.Num() - 1;
+	};
+
+	if (!Root->HasTypedField<EJson::Array>(TEXT("materials")))
+	{
+		return true;
+	}
+
+	TArray<TSharedPtr<FJsonValue>> JsonMaterials = Root->GetArrayField(TEXT("materials"));
+	for (const TSharedPtr<FJsonValue>& MatValue : JsonMaterials)
+	{
+		TSharedPtr<FJsonObject> JsonMat = MatValue->AsObject();
+		if (!JsonMat.IsValid())
+		{
+			continue;
+		}
+
+		const FString MatName = JsonMat->GetStringField(TEXT("name"));
+		UMaterialInterface* Material = MatsByName.FindRef(MatName);
+		if (!Material)
+		{
+			for (const TPair<FString, UMaterialInterface*>& Pair : MatsByName)
+			{
+				if (MatName.StartsWith(Pair.Key) || Pair.Key.StartsWith(MatName))
+				{
+					Material = Pair.Value;
+					break;
+				}
+			}
+		}
+		if (!Material)
+		{
+			continue;
+		}
+
+		TMap<FString, FString> RoleToRes;
+		GatherMaterialTextureResPaths(Material, RoleToRes);
+
+		TSharedPtr<FJsonObject> Pbr = JsonMat->HasTypedField<EJson::Object>(TEXT("pbrMetallicRoughness"))
+			? JsonMat->GetObjectField(TEXT("pbrMetallicRoughness"))
+			: MakeShared<FJsonObject>();
+
+		if (const FString* Albedo = RoleToRes.Find(TEXT("albedo")))
+		{
+			const int32 TexIndex = AddTexture(AddImage(ResPathToUri(*Albedo)));
+			TSharedPtr<FJsonObject> Tex = MakeShared<FJsonObject>();
+			Tex->SetNumberField(TEXT("index"), TexIndex);
+			Pbr->SetObjectField(TEXT("baseColorTexture"), Tex);
+		}
+		if (const FString* Orm = RoleToRes.Find(TEXT("orm")))
+		{
+			const int32 TexIndex = AddTexture(AddImage(ResPathToUri(*Orm)));
+			TSharedPtr<FJsonObject> Tex = MakeShared<FJsonObject>();
+			Tex->SetNumberField(TEXT("index"), TexIndex);
+			Pbr->SetObjectField(TEXT("metallicRoughnessTexture"), Tex);
+			TSharedPtr<FJsonObject> Occ = MakeShared<FJsonObject>();
+			Occ->SetNumberField(TEXT("index"), TexIndex);
+			JsonMat->SetObjectField(TEXT("occlusionTexture"), Occ);
+		}
+		JsonMat->SetObjectField(TEXT("pbrMetallicRoughness"), Pbr);
+
+		if (const FString* Normal = RoleToRes.Find(TEXT("normal")))
+		{
+			const int32 TexIndex = AddTexture(AddImage(ResPathToUri(*Normal)));
+			TSharedPtr<FJsonObject> Tex = MakeShared<FJsonObject>();
+			Tex->SetNumberField(TEXT("index"), TexIndex);
+			JsonMat->SetObjectField(TEXT("normalTexture"), Tex);
+		}
+	}
+
+	if (Images.Num() > 0)
+	{
+		Root->SetArrayField(TEXT("images"), Images);
+		Root->SetArrayField(TEXT("textures"), Textures);
+	}
+	Root->SetArrayField(TEXT("materials"), JsonMaterials);
+
+	FString OutJson;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutJson);
+	if (!FJsonSerializer::Serialize(Root.ToSharedRef(), Writer))
+	{
+		return false;
+	}
+	return FFileHelper::SaveStringToFile(OutJson, *GltfAbsolutePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+}
+
 bool FGodotExportPipeline::WriteProjectGodotIfNeeded() const
 {
 	if (!bGodotProjectMode || !Settings->bWriteProjectGodotIfMissing)
@@ -1154,20 +1497,48 @@ void FGodotExportPipeline::WriteManifest(const FGodotExportResult& Result) const
 
 bool FGodotExportPipeline::ExportMeshOrAnim(UObject* Object, const FAssetData& AssetData, FGodotExportItemResult& Item)
 {
-	const FString Extension = Settings->bUseBinaryGlb ? TEXT("glb") : TEXT("gltf");
+	const bool bAnim = Object->IsA<UAnimSequence>();
+	const FString Extension = bAnim
+		? (Settings->bUseBinaryGlb ? TEXT("glb") : TEXT("gltf"))
+		: TEXT("gltf");
 	const FString AbsolutePath = ResolveOutputPath(AssetData, Extension);
 	Item.OutputPath = GodotExportPrivate::ToResPathFromAbsolute(GodotProject, AbsolutePath);
 
-	if (ShouldSkipUnchanged(AssetData, AbsolutePath))
+	FString ExistingGltf;
+	const bool bHasExternalTextureUris = !bAnim
+		&& FFileHelper::LoadFileToString(ExistingGltf, *AbsolutePath)
+		&& ExistingGltf.Contains(TEXT("textures/"));
+	if (bAnim && ShouldSkipUnchanged(AssetData, AbsolutePath))
 	{
 		Item.Status = EGodotExportStatus::Skipped;
 		Item.Message = TEXT("Destination is up to date");
 		ExportedResPaths.Add(AssetData.PackageName, Item.OutputPath);
-		if (!Object->IsA<UAnimSequence>())
-		{
-			ExportMeshSidecars(Object);
-		}
 		return true;
+	}
+	if (!bAnim && ShouldSkipUnchanged(AssetData, AbsolutePath) && bHasExternalTextureUris)
+	{
+		Item.Status = EGodotExportStatus::Skipped;
+		Item.Message = TEXT("Destination is up to date");
+		ExportedResPaths.Add(AssetData.PackageName, Item.OutputPath);
+		ExportMeshSidecars(Object);
+		WriteGodotGltfImportFile(AbsolutePath, Object);
+		return true;
+	}
+
+	if (!bAnim)
+	{
+		const FString SavedOverride = OutputPathOverride;
+		OutputPathOverride.Empty();
+		ExportMeshSidecars(Object);
+		OutputPathOverride = SavedOverride;
+		WriteGodotGltfImportFile(AbsolutePath, Object);
+
+		const FString OldGlb = FPaths::ChangeExtension(AbsolutePath, TEXT("glb"));
+		if (FPaths::FileExists(OldGlb))
+		{
+			IFileManager::Get().Delete(*OldGlb);
+			IFileManager::Get().Delete(*(OldGlb + TEXT(".import")));
+		}
 	}
 
 	FString Message;
@@ -1179,13 +1550,10 @@ bool FGodotExportPipeline::ExportMeshOrAnim(UObject* Object, const FAssetData& A
 	}
 
 	CleanupGltfImagesInMeshFolder(AbsolutePath);
-
-	if (!Object->IsA<UAnimSequence>())
+	if (!bAnim)
 	{
-		const FString SavedOverride = OutputPathOverride;
-		OutputPathOverride.Empty();
-		ExportMeshSidecars(Object);
-		OutputPathOverride = SavedOverride;
+		PatchGltfWithExternalTextures(AbsolutePath, Object);
+		WriteGodotGltfImportFile(AbsolutePath, Object);
 	}
 	ExportedResPaths.Add(AssetData.PackageName, Item.OutputPath);
 	Item.Status = EGodotExportStatus::Succeeded;
@@ -1195,7 +1563,7 @@ bool FGodotExportPipeline::ExportMeshOrAnim(UObject* Object, const FAssetData& A
 	}
 	else
 	{
-		Item.Message = TEXT("Exported mesh .glb plus .tres materials and .png textures");
+		Item.Message = TEXT("Exported mesh .gltf referencing textures/; materials .tres");
 	}
 	return true;
 }
@@ -1630,6 +1998,7 @@ bool FGodotExportPipeline::ExportLevel(UWorld* World, const FAssetData& AssetDat
 	{
 		Item.Status = EGodotExportStatus::Skipped;
 		Item.Message = TEXT("Destination is up to date");
+		WriteGodotGltfImportFile(AbsolutePath);
 		return true;
 	}
 
@@ -1642,6 +2011,7 @@ bool FGodotExportPipeline::ExportLevel(UWorld* World, const FAssetData& AssetDat
 	}
 
 	CleanupGltfImagesInMeshFolder(AbsolutePath);
+	WriteGodotGltfImportFile(AbsolutePath);
 
 	Item.Status = EGodotExportStatus::Succeeded;
 	Item.Message = Message;
