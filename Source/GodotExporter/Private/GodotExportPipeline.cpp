@@ -3,16 +3,20 @@
 #include "Animation/AnimSequence.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "Components/LightComponent.h"
 #include "DesktopPlatformModule.h"
+#include "Editor.h"
 #include "EditorDirectories.h"
 #include "EditorFramework/AssetImportData.h"
 #include "Engine/DataTable.h"
+#include "Engine/Level.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SkinnedAssetCommon.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
 #include "Engine/Texture2D.h"
 #include "Engine/TextureDefines.h"
+#include "Engine/TextureLightProfile.h"
 #include "Engine/World.h"
 #include "Exporters/GLTFExporter.h"
 #include "Framework/Application/SlateApplication.h"
@@ -36,6 +40,75 @@
 #include "Widgets/SWidget.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogGodotExporter, Log, All);
+
+namespace GodotExportPrivate
+{
+	UWorld* ResolveWorldForExport(UWorld* AssetWorld)
+	{
+		if (!AssetWorld)
+		{
+			return nullptr;
+		}
+		if (GEditor)
+		{
+			if (UWorld* EditorWorld = GEditor->GetEditorWorldContext().World())
+			{
+				if (EditorWorld->GetOutermost() == AssetWorld->GetOutermost())
+				{
+					return EditorWorld;
+				}
+			}
+		}
+		return AssetWorld;
+	}
+
+	struct FScopedClearLightIesProfiles
+	{
+		explicit FScopedClearLightIesProfiles(UWorld* World)
+		{
+			if (!World)
+			{
+				return;
+			}
+			for (ULevel* Level : World->GetLevels())
+			{
+				if (!Level)
+				{
+					continue;
+				}
+				for (AActor* Actor : Level->Actors)
+				{
+					if (!Actor)
+					{
+						continue;
+					}
+					TInlineComponentArray<ULightComponent*> Lights(Actor);
+					for (ULightComponent* Light : Lights)
+					{
+						if (Light && Light->IESTexture)
+						{
+							Saved.Add({ Light, Light->IESTexture });
+							Light->IESTexture = nullptr;
+						}
+					}
+				}
+			}
+		}
+
+		~FScopedClearLightIesProfiles()
+		{
+			for (const TPair<ULightComponent*, TObjectPtr<UTextureLightProfile>>& Pair : Saved)
+			{
+				if (Pair.Key)
+				{
+					Pair.Key->IESTexture = Pair.Value;
+				}
+			}
+		}
+
+		TArray<TPair<ULightComponent*, TObjectPtr<UTextureLightProfile>>> Saved;
+	};
+}
 
 namespace GodotExportPrivate
 {
@@ -1047,6 +1120,7 @@ bool FGodotExportPipeline::ExportWithGltf(UObject* Object, const FString& Absolu
 	Options->bExportCameras = true;
 	Options->bExportLights = true;
 	Options->bExportSourceModel = true;
+	Options->bUseImporterMaterialMapping = false;
 
 	const bool bAnimationOnly = Object->IsA<UAnimSequence>();
 	const bool bLevel = Object->IsA<UWorld>();
@@ -2198,12 +2272,23 @@ bool FGodotExportPipeline::ExportLevel(UWorld* World, const FAssetData& AssetDat
 		return true;
 	}
 
-	FString Message;
-	if (!ExportWithGltf(World, AbsolutePath, Message))
+	World = GodotExportPrivate::ResolveWorldForExport(World);
+	if (!World || !World->PersistentLevel)
 	{
 		Item.Status = EGodotExportStatus::Failed;
-		Item.Message = Message;
+		Item.Message = TEXT("Open the level in the editor before exporting (the map is not fully loaded)");
 		return false;
+	}
+
+	FString Message;
+	{
+		GodotExportPrivate::FScopedClearLightIesProfiles ClearIes(World);
+		if (!ExportWithGltf(World, AbsolutePath, Message))
+		{
+			Item.Status = EGodotExportStatus::Failed;
+			Item.Message = Message;
+			return false;
+		}
 	}
 
 	CleanupGltfImagesInMeshFolder(AbsolutePath);
