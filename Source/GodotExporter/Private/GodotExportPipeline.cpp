@@ -27,6 +27,7 @@
 #include "ImageUtils.h"
 #include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInterface.h"
+#include "Misc/Char.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
@@ -293,60 +294,200 @@ namespace GodotExportPrivate
 	FString LastNameToken(const FString& Name)
 	{
 		FString Lower = Name.ToLower();
+		Lower.TrimStartAndEndInline();
 		int32 Dot = INDEX_NONE;
 		if (Lower.FindLastChar(TEXT('.'), Dot) && Dot > 0)
 		{
 			Lower = Lower.Left(Dot);
 		}
-		int32 Underscore = INDEX_NONE;
-		if (Lower.FindLastChar(TEXT('_'), Underscore) && Underscore + 1 < Lower.Len())
+		int32 Split = INDEX_NONE;
+		if (Lower.FindLastChar(TEXT('_'), Split) && Split + 1 < Lower.Len())
 		{
-			return Lower.Mid(Underscore + 1);
+			return Lower.Mid(Split + 1);
+		}
+		if (Lower.FindLastChar(TEXT(' '), Split) && Split + 1 < Lower.Len())
+		{
+			return Lower.Mid(Split + 1);
 		}
 		return Lower;
+	}
+
+	FString CompactIdent(const FString& Name)
+	{
+		FString Out;
+		Out.Reserve(Name.Len());
+		for (const TCHAR C : Name)
+		{
+			if (FChar::IsAlnum(C))
+			{
+				Out.AppendChar(FChar::ToLower(C));
+			}
+		}
+		return Out;
+	}
+
+	int32 AlbedoNameScore(const FString& Name)
+	{
+		const FString Compact = CompactIdent(Name);
+		if (Compact == TEXT("basecolor") || Compact == TEXT("basecolour"))
+		{
+			return 100;
+		}
+		if (Compact.Contains(TEXT("basecolor")) || Compact.Contains(TEXT("basecolour")))
+		{
+			return 90;
+		}
+		if (Compact.Contains(TEXT("albedo")))
+		{
+			return 80;
+		}
+		if (Compact.Contains(TEXT("diffuse")))
+		{
+			return 70;
+		}
+		if (Compact.Contains(TEXT("basetexture")) || Compact.Contains(TEXT("basemap")))
+		{
+			return 60;
+		}
+		if (Compact == TEXT("tint") || Compact == TEXT("tintcolor") || Compact == TEXT("tintcolour"))
+		{
+			return 50;
+		}
+		if (Compact == TEXT("color") || Compact == TEXT("colour"))
+		{
+			return 40;
+		}
+		return 0;
+	}
+
+	bool IsNearlyWhite(const FLinearColor& Color)
+	{
+		return Color.Equals(FLinearColor::White, 0.02f);
+	}
+
+	FLinearColor ResolveAlbedoColor(UMaterialInterface* Material)
+	{
+		FLinearColor Albedo = FLinearColor::White;
+		if (!Material)
+		{
+			return Albedo;
+		}
+
+		int32 BestScore = 0;
+		bool bFoundNonWhite = false;
+		FString ChosenName;
+
+		auto Consider = [&](const FString& Name, const FLinearColor& Value)
+		{
+			const int32 Score = AlbedoNameScore(Name);
+			if (Score <= 0)
+			{
+				return;
+			}
+			const bool bNonWhite = !IsNearlyWhite(Value);
+			if (bNonWhite && (!bFoundNonWhite || Score > BestScore))
+			{
+				BestScore = Score;
+				Albedo = Value;
+				ChosenName = Name;
+				bFoundNonWhite = true;
+				return;
+			}
+			if (!bFoundNonWhite && Score > BestScore)
+			{
+				BestScore = Score;
+				Albedo = Value;
+				ChosenName = Name;
+			}
+		};
+
+		static const TCHAR* PreferredNames[] = {
+			TEXT("Base Color"),
+			TEXT("Base Color "),
+			TEXT("BaseColor"),
+			TEXT("Color"),
+			TEXT("Tint"),
+			TEXT("Albedo"),
+			TEXT("Diffuse Color"),
+			TEXT("DiffuseColor")
+		};
+		for (const TCHAR* Name : PreferredNames)
+		{
+			FLinearColor Value;
+			if (Material->GetVectorParameterValue(FMaterialParameterInfo(Name), Value))
+			{
+				Consider(Name, Value);
+			}
+		}
+
+		TArray<FMaterialParameterInfo> VectorInfos;
+		TArray<FGuid> VectorIds;
+		Material->GetAllVectorParameterInfo(VectorInfos, VectorIds);
+		for (const FMaterialParameterInfo& Info : VectorInfos)
+		{
+			FLinearColor Value;
+			if (Material->GetVectorParameterValue(Info, Value))
+			{
+				Consider(Info.Name.ToString(), Value);
+			}
+		}
+
+		UE_LOG(
+			LogGodotExporter,
+			Display,
+			TEXT("Material %s albedo_color=(%f, %f, %f, %f) param='%s'"),
+			*Material->GetName(),
+			Albedo.R,
+			Albedo.G,
+			Albedo.B,
+			Albedo.A,
+			*ChosenName);
+		return Albedo;
 	}
 
 	FString GuessTextureRole(const FString& Name)
 	{
 		const FString Token = LastNameToken(Name);
 		const FString Lower = Name.ToLower();
+		const FString Compact = CompactIdent(Name);
 
 		if (Token == TEXT("n") || Token == TEXT("nrm") || Token == TEXT("norm") || Token == TEXT("normal")
-			|| Token == TEXT("normalmap") || Lower.Contains(TEXT("normalmap")) || Lower.Contains(TEXT("normal_map")))
+			|| Token == TEXT("normalmap") || Compact.Contains(TEXT("normal")))
 		{
 			return TEXT("normal");
 		}
 		if (Token == TEXT("e") || Token == TEXT("em") || Token == TEXT("emissive") || Token == TEXT("emission")
-			|| Lower.Contains(TEXT("emissi")))
+			|| Compact.Contains(TEXT("emissi")))
 		{
 			return TEXT("emission");
 		}
 		if (Token == TEXT("orm") || Token == TEXT("arm") || Token == TEXT("rma") || Token == TEXT("mra")
-			|| Token == TEXT("mask") || Lower.Contains(TEXT("_orm")) || Lower.Contains(TEXT("_mra")))
+			|| Token == TEXT("mask") || Compact == TEXT("orm") || Compact.EndsWith(TEXT("orm"))
+			|| Compact.Contains(TEXT("mra")))
 		{
 			return TEXT("orm");
 		}
-		if (Token == TEXT("rough") || Token == TEXT("roughness") || Lower.Contains(TEXT("roughness")))
+		if (Token == TEXT("rough") || Token == TEXT("roughness") || Compact.Contains(TEXT("roughness")))
 		{
 			return TEXT("roughness");
 		}
-		if (Token == TEXT("metal") || Token == TEXT("metallic") || Token == TEXT("met") || Lower.Contains(TEXT("metallic")))
+		if (Token == TEXT("metal") || Token == TEXT("metallic") || Token == TEXT("met") || Compact.Contains(TEXT("metallic")))
 		{
 			return TEXT("metallic");
 		}
-		if (Token == TEXT("ao") || Token == TEXT("occlusion") || Lower.Contains(TEXT("ambientocclusion"))
-			|| Lower.Contains(TEXT("ambient_occlusion")))
+		if (Token == TEXT("ao") || Token == TEXT("occlusion") || Compact.Contains(TEXT("ambientocclusion"))
+			|| Compact.Contains(TEXT("occlusion")))
 		{
 			return TEXT("ao");
 		}
-		if (Token == TEXT("opacity") || Token == TEXT("alpha") || Token == TEXT("alphamask") || Lower.Contains(TEXT("opacity")))
+		if (Token == TEXT("opacity") || Token == TEXT("alpha") || Token == TEXT("alphamask") || Compact.Contains(TEXT("opacity")))
 		{
 			return TEXT("alpha");
 		}
 		if (Token == TEXT("d") || Token == TEXT("c") || Token == TEXT("bc") || Token == TEXT("col") || Token == TEXT("diff")
 			|| Token == TEXT("diffuse") || Token == TEXT("albedo") || Token == TEXT("basecolor") || Token == TEXT("basemap")
-			|| Lower.Contains(TEXT("basecolor")) || Lower.Contains(TEXT("base_color")) || Lower.Contains(TEXT("albedo"))
-			|| Lower.Contains(TEXT("diffuse")))
+			|| Token == TEXT("color") || Token == TEXT("colour") || Token == TEXT("tint")
+			|| AlbedoNameScore(Name) > 0)
 		{
 			return TEXT("albedo");
 		}
@@ -1318,18 +1459,61 @@ void FGodotExportPipeline::GatherMaterialTextureResPaths(UMaterialInterface* Mat
 		return FString();
 	};
 
-	auto Assign = [&](const FString& Role, UTexture* Texture)
+	TMap<FString, TPair<int32, UTexture*>> BestByRole;
+	auto Consider = [&](const FString& Role, UTexture* Texture, int32 Score)
 	{
-		if (Role.IsEmpty() || OutRoleToRes.Contains(Role) || !Texture)
+		if (Role.IsEmpty() || !Texture || GodotExportPrivate::IsEngineTexture(Texture))
 		{
 			return;
 		}
-		const FString ResPath = ExportIfNeeded(Texture);
-		if (!ResPath.IsEmpty())
+		if (const TPair<int32, UTexture*>* Existing = BestByRole.Find(Role))
 		{
-			OutRoleToRes.Add(Role, ResPath);
+			if (Score <= Existing->Key)
+			{
+				return;
+			}
 		}
+		BestByRole.Add(Role, TPair<int32, UTexture*>(Score, Texture));
 	};
+
+	auto RoleFromParam = [](const FString& ParamName, const UTexture* Texture) -> FString
+	{
+		FString Role = GodotExportPrivate::GuessTextureRole(ParamName);
+		if (Role.IsEmpty() && Texture)
+		{
+			Role = GodotExportPrivate::GuessTextureRole(Texture->GetName());
+		}
+		if (Role.IsEmpty() && Texture && Texture->CompressionSettings == TC_Normalmap)
+		{
+			Role = TEXT("normal");
+		}
+		return Role;
+	};
+
+	// Instance overrides first: GetTextureParameterValue resolves MIC values, not the parent defaults.
+	TArray<FMaterialParameterInfo> TextureInfos;
+	TArray<FGuid> TextureIds;
+	Material->GetAllTextureParameterInfo(TextureInfos, TextureIds);
+	for (const FMaterialParameterInfo& Info : TextureInfos)
+	{
+		UTexture* Texture = nullptr;
+		if (!Material->GetTextureParameterValue(Info, Texture) || !Texture)
+		{
+			continue;
+		}
+		const FString ParamName = Info.Name.ToString();
+		const FString Role = RoleFromParam(ParamName, Texture);
+		const int32 Score = 100 + GodotExportPrivate::AlbedoNameScore(ParamName);
+		Consider(Role, Texture, Score);
+		UE_LOG(
+			LogGodotExporter,
+			Display,
+			TEXT("Material %s tex param '%s' -> %s (%s)"),
+			*Material->GetName(),
+			*ParamName,
+			*Role,
+			Texture ? *Texture->GetName() : TEXT("null"));
+	}
 
 	const uint32 BitAlbedo = 1u << 0;
 	const uint32 BitNormal = 1u << 1;
@@ -1339,7 +1523,6 @@ void FGodotExportPipeline::GatherMaterialTextureResPaths(UMaterialInterface* Mat
 	const uint32 BitEmissive = 1u << 5;
 	const uint32 BitOpacity = 1u << 6;
 
-	TMap<UTexture*, uint32> PropertyMask;
 	const TPair<EMaterialProperty, uint32> Chains[] = {
 		{ MP_BaseColor, BitAlbedo },
 		{ MP_Normal, BitNormal },
@@ -1356,97 +1539,57 @@ void FGodotExportPipeline::GatherMaterialTextureResPaths(UMaterialInterface* Mat
 		TArray<UTexture*> Textures;
 		TArray<FName> ParamNames;
 		Material->GetTexturesInPropertyChain(Chain.Key, Textures, &ParamNames, nullptr);
-		for (UTexture* Texture : Textures)
-		{
-			if (Texture && !GodotExportPrivate::IsEngineTexture(Texture))
-			{
-				PropertyMask.FindOrAdd(Texture) |= Chain.Value;
-			}
-		}
 		for (const FName& ParamName : ParamNames)
 		{
 			UTexture* Texture = nullptr;
-			Material->GetTextureParameterValue(FMaterialParameterInfo(ParamName), Texture);
-			if (Texture && !GodotExportPrivate::IsEngineTexture(Texture))
-			{
-				PropertyMask.FindOrAdd(Texture) |= Chain.Value;
-			}
-		}
-	}
-
-	TArray<UTexture*> Ordered;
-	PropertyMask.GetKeys(Ordered);
-	Ordered.Sort([](const UTexture& A, const UTexture& B)
-	{
-		return A.GetPathName() < B.GetPathName();
-	});
-
-	for (UTexture* Texture : Ordered)
-	{
-		const uint32 Mask = PropertyMask.FindRef(Texture);
-		FString Role;
-		if (Texture->CompressionSettings == TC_Normalmap || (Mask & BitNormal))
-		{
-			Role = TEXT("normal");
-		}
-		else
-		{
-			const int32 Packed = ((Mask & BitMetallic) ? 1 : 0) + ((Mask & BitRoughness) ? 1 : 0) + ((Mask & BitAO) ? 1 : 0);
-			if (Packed >= 2)
-			{
-				Role = TEXT("orm");
-			}
-			else if (Mask & BitAlbedo)
-			{
-				Role = TEXT("albedo");
-			}
-			else if (Mask & BitEmissive)
-			{
-				Role = TEXT("emission");
-			}
-			else if (Mask & BitAO)
-			{
-				Role = TEXT("ao");
-			}
-			else if (Mask & BitRoughness)
-			{
-				Role = TEXT("roughness");
-			}
-			else if (Mask & BitMetallic)
-			{
-				Role = TEXT("metallic");
-			}
-			else if (Mask & BitOpacity)
-			{
-				Role = TEXT("alpha");
-			}
-		}
-		Assign(Role, Texture);
-	}
-
-	if (!OutRoleToRes.Contains(TEXT("albedo")) || !OutRoleToRes.Contains(TEXT("normal")))
-	{
-		TArray<FMaterialParameterInfo> TextureInfos;
-		TArray<FGuid> TextureIds;
-		Material->GetAllTextureParameterInfo(TextureInfos, TextureIds);
-		for (const FMaterialParameterInfo& Info : TextureInfos)
-		{
-			UTexture* Texture = nullptr;
-			Material->GetTextureParameterValue(Info, Texture);
-			if (!Texture || GodotExportPrivate::IsEngineTexture(Texture))
+			if (!Material->GetTextureParameterValue(FMaterialParameterInfo(ParamName), Texture) || !Texture)
 			{
 				continue;
 			}
-			FString Role = GodotExportPrivate::GuessTextureRole(Info.Name.ToString());
-			if (Role.IsEmpty())
-			{
-				Role = GodotExportPrivate::GuessTextureRole(Texture->GetName());
-			}
-			if (Role.IsEmpty() && Texture->CompressionSettings == TC_Normalmap)
+			const FString Role = RoleFromParam(ParamName.ToString(), Texture);
+			Consider(Role, Texture, 90);
+		}
+		for (UTexture* Texture : Textures)
+		{
+			FString Role;
+			if (Chain.Value == BitNormal || (Texture && Texture->CompressionSettings == TC_Normalmap))
 			{
 				Role = TEXT("normal");
 			}
-			Assign(Role, Texture);
+			else if (Chain.Value == BitAlbedo)
+			{
+				Role = TEXT("albedo");
+			}
+			else if (Chain.Value == BitEmissive)
+			{
+				Role = TEXT("emission");
+			}
+			else if (Chain.Value == BitAO)
+			{
+				Role = TEXT("ao");
+			}
+			else if (Chain.Value == BitRoughness)
+			{
+				Role = TEXT("roughness");
+			}
+			else if (Chain.Value == BitMetallic)
+			{
+				Role = TEXT("metallic");
+			}
+			else if (Chain.Value == BitOpacity)
+			{
+				Role = TEXT("alpha");
+			}
+			Consider(Role, Texture, 10);
+		}
+	}
+
+	for (const TPair<FString, TPair<int32, UTexture*>>& Pair : BestByRole)
+	{
+		const FString ResPath = ExportIfNeeded(Pair.Value.Value);
+		if (!ResPath.IsEmpty())
+		{
+			OutRoleToRes.Add(Pair.Key, ResPath);
 		}
 	}
 }
@@ -1595,6 +1738,16 @@ bool FGodotExportPipeline::PatchGltfWithExternalTextures(const FString& GltfAbso
 			TSharedPtr<FJsonObject> Tex = MakeShared<FJsonObject>();
 			Tex->SetNumberField(TEXT("index"), TexIndex);
 			Pbr->SetObjectField(TEXT("baseColorTexture"), Tex);
+		}
+
+		{
+			const FLinearColor AlbedoColor = GodotExportPrivate::ResolveAlbedoColor(Material);
+			TArray<TSharedPtr<FJsonValue>> Factor;
+			Factor.Add(MakeShared<FJsonValueNumber>(AlbedoColor.R));
+			Factor.Add(MakeShared<FJsonValueNumber>(AlbedoColor.G));
+			Factor.Add(MakeShared<FJsonValueNumber>(AlbedoColor.B));
+			Factor.Add(MakeShared<FJsonValueNumber>(AlbedoColor.A));
+			Pbr->SetArrayField(TEXT("baseColorFactor"), Factor);
 		}
 		if (const FString* Orm = RoleToRes.Find(TEXT("orm")))
 		{
@@ -1818,16 +1971,11 @@ bool FGodotExportPipeline::ExportMeshOrAnim(UObject* Object, const FAssetData& A
 	const FString GltfPath = FPaths::ChangeExtension(AbsolutePath, TEXT("gltf"));
 	const FString BinPath = FPaths::ChangeExtension(AbsolutePath, TEXT("bin"));
 	const bool bHasOrphanSidecars = FPaths::FileExists(GltfPath) || FPaths::FileExists(BinPath);
-	if (ShouldSkipUnchanged(AssetData, AbsolutePath) && !bHasOrphanSidecars)
+	if (bAnim && ShouldSkipUnchanged(AssetData, AbsolutePath) && !bHasOrphanSidecars)
 	{
 		Item.Status = EGodotExportStatus::Skipped;
 		Item.Message = TEXT("Destination is up to date");
 		ExportedResPaths.Add(AssetData.PackageName, Item.OutputPath);
-		if (!bAnim)
-		{
-			ExportMeshSidecars(Object);
-			WriteGodotGltfImportFile(AbsolutePath, Object);
-		}
 		return true;
 	}
 
@@ -2096,33 +2244,11 @@ bool FGodotExportPipeline::ExportMaterial(UMaterialInterface* Material, const FA
 	const FString AbsolutePath = ResolveOutputPath(AssetData, TEXT("tres"));
 	Item.OutputPath = GodotExportPrivate::ToResPathFromAbsolute(GodotProject, AbsolutePath);
 
-	FString ExistingTres;
-	const bool bTresHasTextures = FFileHelper::LoadFileToString(ExistingTres, *AbsolutePath)
-		&& ExistingTres.Contains(TEXT("ext_resource"));
-	if (ShouldSkipUnchanged(AssetData, AbsolutePath) && bTresHasTextures)
-	{
-		Item.Status = EGodotExportStatus::Skipped;
-		Item.Message = TEXT("Destination is up to date");
-		return true;
-	}
-
 	TMap<FString, FString> RoleToRes;
 	GatherMaterialTextureResPaths(Material, RoleToRes);
 
-	TMap<FString, FLinearColor> VectorParams;
 	TMap<FString, float> ScalarParams;
 	{
-		TArray<FMaterialParameterInfo> VectorInfos;
-		TArray<FGuid> VectorIds;
-		Material->GetAllVectorParameterInfo(VectorInfos, VectorIds);
-		for (const FMaterialParameterInfo& Info : VectorInfos)
-		{
-			FLinearColor Value;
-			if (Material->GetVectorParameterValue(Info, Value))
-			{
-				VectorParams.Add(Info.Name.ToString(), Value);
-			}
-		}
 		TArray<FMaterialParameterInfo> ScalarInfos;
 		TArray<FGuid> ScalarIds;
 		Material->GetAllScalarParameterInfo(ScalarInfos, ScalarIds);
@@ -2136,15 +2262,7 @@ bool FGodotExportPipeline::ExportMaterial(UMaterialInterface* Material, const FA
 		}
 	}
 
-	FLinearColor Albedo = FLinearColor::White;
-	for (const TPair<FString, FLinearColor>& Pair : VectorParams)
-	{
-		if (GodotExportPrivate::GuessTextureRole(Pair.Key) == TEXT("albedo"))
-		{
-			Albedo = Pair.Value;
-			break;
-		}
-	}
+	const FLinearColor Albedo = GodotExportPrivate::ResolveAlbedoColor(Material);
 
 	float Metallic = 0.f;
 	float Roughness = 1.f;
