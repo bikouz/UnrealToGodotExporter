@@ -25,6 +25,7 @@
 #include "HAL/FileManager.h"
 #include "ImageCore.h"
 #include "ImageUtils.h"
+#include "Materials/Material.h"
 #include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/Char.h"
@@ -513,6 +514,208 @@ namespace GodotExportPrivate
 		return Albedo;
 	}
 
+	int32 EmissiveNameScore(const FString& Name)
+	{
+		const FString Compact = CompactIdent(Name);
+		if (Compact == TEXT("emissivecolor") || Compact == TEXT("emissioncolor") || Compact == TEXT("emissive"))
+		{
+			return 100;
+		}
+		if (Compact.Contains(TEXT("emissivecolor")) || Compact.Contains(TEXT("emissioncolor")))
+		{
+			return 90;
+		}
+		if (Compact.Contains(TEXT("emissi")) || Compact.Contains(TEXT("selfillum")))
+		{
+			return 80;
+		}
+		if (Compact.Contains(TEXT("glowcolor")) || Compact == TEXT("glow"))
+		{
+			return 60;
+		}
+		return 0;
+	}
+
+	int32 EmissiveIntensityNameScore(const FString& Name)
+	{
+		const FString Compact = CompactIdent(Name);
+		if (Compact.Contains(TEXT("emissiveintensity")) || Compact.Contains(TEXT("emissionintensity"))
+			|| Compact.Contains(TEXT("emissivestrength")) || Compact.Contains(TEXT("emissionstrength"))
+			|| Compact.Contains(TEXT("emissivemultiplier")) || Compact.Contains(TEXT("emissionmultiplier"))
+			|| Compact.Contains(TEXT("emissivescale")))
+		{
+			return 100;
+		}
+		if (Compact == TEXT("intensity") || Compact == TEXT("brightness") || Compact == TEXT("emissivepower"))
+		{
+			return 50;
+		}
+		return 0;
+	}
+
+	bool IsNearlyBlack(const FLinearColor& Color)
+	{
+		return Color.R <= 0.02f && Color.G <= 0.02f && Color.B <= 0.02f;
+	}
+
+	FLinearColor ResolveEmissiveColor(UMaterialInterface* Material)
+	{
+		FLinearColor Emissive = FLinearColor::Black;
+		if (!Material)
+		{
+			return Emissive;
+		}
+
+		{
+			UMaterialInterface* Current = Material;
+			int32 Depth = 0;
+			while (UMaterialInstance* Inst = Cast<UMaterialInstance>(Current))
+			{
+				int32 BestLocal = 0;
+				FLinearColor Local = FLinearColor::Black;
+				bool bLocal = false;
+				for (const FVectorParameterValue& Param : Inst->VectorParameterValues)
+				{
+					const int32 Score = EmissiveNameScore(Param.ParameterInfo.Name.ToString());
+					if (Score <= 0)
+					{
+						continue;
+					}
+					if (!bLocal || Score > BestLocal)
+					{
+						BestLocal = Score;
+						Local = Param.ParameterValue;
+						bLocal = true;
+					}
+				}
+				if (bLocal)
+				{
+					return Local;
+				}
+				Current = Inst->Parent;
+				if (++Depth > 16)
+				{
+					break;
+				}
+			}
+		}
+
+		int32 BestScore = 0;
+		auto Consider = [&](const FString& Name, const FLinearColor& Value)
+		{
+			const int32 Score = EmissiveNameScore(Name);
+			if (Score <= 0)
+			{
+				return;
+			}
+			if (Score > BestScore)
+			{
+				BestScore = Score;
+				Emissive = Value;
+			}
+		};
+
+		static const TCHAR* PreferredNames[] = {
+			TEXT("Emissive Color"),
+			TEXT("EmissiveColor"),
+			TEXT("Emissive"),
+			TEXT("Emission Color"),
+			TEXT("Emission"),
+			TEXT("Glow Color")
+		};
+		for (const TCHAR* Name : PreferredNames)
+		{
+			FLinearColor Value;
+			if (Material->GetVectorParameterValue(FMaterialParameterInfo(Name), Value))
+			{
+				Consider(Name, Value);
+			}
+		}
+
+		TArray<FMaterialParameterInfo> VectorInfos;
+		TArray<FGuid> VectorIds;
+		Material->GetAllVectorParameterInfo(VectorInfos, VectorIds);
+		for (const FMaterialParameterInfo& Info : VectorInfos)
+		{
+			FLinearColor Value;
+			if (Material->GetVectorParameterValue(Info, Value))
+			{
+				Consider(Info.Name.ToString(), Value);
+			}
+		}
+
+		return Emissive;
+	}
+
+	float ResolveEmissiveIntensity(UMaterialInterface* Material)
+	{
+		float Intensity = 1.f;
+		if (!Material)
+		{
+			return Intensity;
+		}
+
+		int32 BestScore = 0;
+		bool bFound = false;
+		auto Consider = [&](const FString& Name, float Value)
+		{
+			const int32 Score = EmissiveIntensityNameScore(Name);
+			if (Score <= 0)
+			{
+				return;
+			}
+			if (!bFound || Score > BestScore)
+			{
+				BestScore = Score;
+				Intensity = Value;
+				bFound = true;
+			}
+		};
+
+		UMaterialInterface* Current = Material;
+		int32 Depth = 0;
+		while (UMaterialInstance* Inst = Cast<UMaterialInstance>(Current))
+		{
+			for (const FScalarParameterValue& Param : Inst->ScalarParameterValues)
+			{
+				Consider(Param.ParameterInfo.Name.ToString(), Param.ParameterValue);
+			}
+			if (bFound && BestScore >= 100)
+			{
+				return Intensity;
+			}
+			Current = Inst->Parent;
+			if (++Depth > 16)
+			{
+				break;
+			}
+		}
+
+		TArray<FMaterialParameterInfo> ScalarInfos;
+		TArray<FGuid> ScalarIds;
+		Material->GetAllScalarParameterInfo(ScalarInfos, ScalarIds);
+		for (const FMaterialParameterInfo& Info : ScalarInfos)
+		{
+			float Value = 0.f;
+			if (Material->GetScalarParameterValue(Info, Value))
+			{
+				Consider(Info.Name.ToString(), Value);
+			}
+		}
+
+		return Intensity;
+	}
+
+	bool IsUnlitMaterial(UMaterialInterface* Material)
+	{
+		if (!Material)
+		{
+			return false;
+		}
+		const FMaterialShadingModelField Models = Material->GetShadingModels();
+		return Models.HasShadingModel(MSM_Unlit) && Models.CountShadingModels() == 1;
+	}
+
 	FString GuessTextureRole(const FString& Name)
 	{
 		const FString Token = LastNameToken(Name);
@@ -525,7 +728,8 @@ namespace GodotExportPrivate
 			return TEXT("normal");
 		}
 		if (Token == TEXT("e") || Token == TEXT("em") || Token == TEXT("emissive") || Token == TEXT("emission")
-			|| Compact.Contains(TEXT("emissi")))
+			|| Token == TEXT("glow") || Token == TEXT("illum") || Token == TEXT("selfillum") || Token == TEXT("emit")
+			|| Compact.Contains(TEXT("emissi")) || Compact.Contains(TEXT("selfillum")) || Compact.Contains(TEXT("glow")))
 		{
 			return TEXT("emission");
 		}
@@ -1942,6 +2146,39 @@ bool FGodotExportPipeline::PatchGltfWithExternalTextures(const FString& GltfAbso
 			Tex->SetNumberField(TEXT("index"), TexIndex);
 			JsonMat->SetObjectField(TEXT("normalTexture"), Tex);
 		}
+
+		FLinearColor EmissiveColor = GodotExportPrivate::ResolveEmissiveColor(Material);
+		const float EmissiveIntensity = GodotExportPrivate::ResolveEmissiveIntensity(Material);
+		const bool bHasEmissiveTex = RoleToRes.Contains(TEXT("emission"));
+		if (bHasEmissiveTex || !GodotExportPrivate::IsNearlyBlack(EmissiveColor))
+		{
+			float Energy = FMath::Max(EmissiveIntensity, 0.f);
+			const float MaxChannel = FMath::Max3(EmissiveColor.R, EmissiveColor.G, EmissiveColor.B);
+			if (MaxChannel > 1.f)
+			{
+				EmissiveColor.R /= MaxChannel;
+				EmissiveColor.G /= MaxChannel;
+				EmissiveColor.B /= MaxChannel;
+				Energy *= MaxChannel;
+			}
+			if (GodotExportPrivate::IsNearlyBlack(EmissiveColor) && bHasEmissiveTex)
+			{
+				EmissiveColor = FLinearColor::White;
+			}
+			Energy = FMath::Max(Energy, 1.f);
+			TArray<TSharedPtr<FJsonValue>> Factor;
+			Factor.Add(MakeShared<FJsonValueNumber>(EmissiveColor.R * Energy));
+			Factor.Add(MakeShared<FJsonValueNumber>(EmissiveColor.G * Energy));
+			Factor.Add(MakeShared<FJsonValueNumber>(EmissiveColor.B * Energy));
+			JsonMat->SetArrayField(TEXT("emissiveFactor"), Factor);
+			if (const FString* Emission = RoleToRes.Find(TEXT("emission")))
+			{
+				const int32 TexIndex = AddTexture(AddImage(ResPathToUri(*Emission)));
+				TSharedPtr<FJsonObject> Tex = MakeShared<FJsonObject>();
+				Tex->SetNumberField(TEXT("index"), TexIndex);
+				JsonMat->SetObjectField(TEXT("emissiveTexture"), Tex);
+			}
+		}
 	}
 
 	if (Images.Num() > 0)
@@ -2491,7 +2728,7 @@ bool FGodotExportPipeline::ExportMaterial(UMaterialInterface* Material, const FA
 		}
 	}
 
-	const FLinearColor Albedo = GodotExportPrivate::ResolveAlbedoColor(Material);
+	FLinearColor Albedo = GodotExportPrivate::ResolveAlbedoColor(Material);
 
 	float Metallic = 0.f;
 	float Roughness = 1.f;
@@ -2546,6 +2783,43 @@ bool FGodotExportPipeline::ExportMaterial(UMaterialInterface* Material, const FA
 	}
 
 	const bool bTwoSided = Material->IsTwoSided();
+	const bool bUnlit = GodotExportPrivate::IsUnlitMaterial(Material);
+	FLinearColor EmissiveColor = GodotExportPrivate::ResolveEmissiveColor(Material);
+	float EmissiveIntensity = GodotExportPrivate::ResolveEmissiveIntensity(Material);
+	const bool bHasEmissionTexture = RoleToRes.Contains(TEXT("emission"));
+	const bool bHasAlbedoTexture = RoleToRes.Contains(TEXT("albedo"));
+
+	// Unlit Unreal materials output through Emissive Color, not Base Color.
+	if (bUnlit)
+	{
+		if (GodotExportPrivate::IsNearlyWhite(Albedo) && !GodotExportPrivate::IsNearlyBlack(EmissiveColor))
+		{
+			Albedo = EmissiveColor;
+			Albedo.A = 1.f;
+		}
+		if (!bHasAlbedoTexture && bHasEmissionTexture)
+		{
+			RoleToRes.Add(TEXT("albedo"), RoleToRes.FindChecked(TEXT("emission")));
+		}
+	}
+
+	float EmissionEnergy = FMath::Max(EmissiveIntensity, 0.f);
+	{
+		const float MaxChannel = FMath::Max3(EmissiveColor.R, EmissiveColor.G, EmissiveColor.B);
+		if (MaxChannel > 1.f)
+		{
+			EmissiveColor.R /= MaxChannel;
+			EmissiveColor.G /= MaxChannel;
+			EmissiveColor.B /= MaxChannel;
+			EmissionEnergy *= MaxChannel;
+		}
+	}
+	if (GodotExportPrivate::IsNearlyBlack(EmissiveColor) && bHasEmissionTexture)
+	{
+		EmissiveColor = FLinearColor::White;
+	}
+	const bool bEnableEmission = bHasEmissionTexture || !GodotExportPrivate::IsNearlyBlack(EmissiveColor) || EmissionEnergy > 1.01f;
+
 	const EBlendMode Blend = Material->GetBlendMode();
 	int32 Transparency = 0;
 	if (Blend == BLEND_Masked)
@@ -2571,6 +2845,10 @@ bool FGodotExportPipeline::ExportMaterial(UMaterialInterface* Material, const FA
 		++ResourceId;
 	}
 
+	if (bUnlit)
+	{
+		ResourceLines.Add(TEXT("shading_mode = 0"));
+	}
 	ResourceLines.Add(FString::Printf(TEXT("albedo_color = Color(%f, %f, %f, %f)"), Albedo.R, Albedo.G, Albedo.B, Albedo.A));
 	ResourceLines.Add(FString::Printf(TEXT("metallic = %f"), Metallic));
 	ResourceLines.Add(FString::Printf(TEXT("roughness = %f"), Roughness));
@@ -2581,6 +2859,26 @@ bool FGodotExportPipeline::ExportMaterial(UMaterialInterface* Material, const FA
 	if (Transparency != 0)
 	{
 		ResourceLines.Add(FString::Printf(TEXT("transparency = %d"), Transparency));
+		if (Blend == BLEND_Additive)
+		{
+			ResourceLines.Add(TEXT("blend_mode = 1"));
+		}
+	}
+	if (bEnableEmission)
+	{
+		ResourceLines.Add(TEXT("emission_enabled = true"));
+		ResourceLines.Add(FString::Printf(
+			TEXT("emission = Color(%f, %f, %f, 1)"),
+			EmissiveColor.R,
+			EmissiveColor.G,
+			EmissiveColor.B));
+		if (EmissionEnergy <= 0.f)
+		{
+			EmissionEnergy = 1.f;
+		}
+		ResourceLines.Add(FString::Printf(TEXT("emission_energy_multiplier = %f"), EmissionEnergy));
+		// Unreal multiplies texture * color * intensity.
+		ResourceLines.Add(TEXT("emission_operator = 1"));
 	}
 
 	auto BindTexture = [&](const TCHAR* Role, const TCHAR* Property, const TCHAR* Extra = nullptr)
@@ -2597,11 +2895,14 @@ bool FGodotExportPipeline::ExportMaterial(UMaterialInterface* Material, const FA
 
 	BindTexture(TEXT("albedo"), TEXT("albedo_texture"));
 	BindTexture(TEXT("normal"), TEXT("normal_texture"), TEXT("normal_enabled = true"));
-	BindTexture(TEXT("emission"), TEXT("emission_texture"), TEXT("emission_enabled = true"));
+	BindTexture(TEXT("emission"), TEXT("emission_texture"));
 	BindTexture(TEXT("roughness"), TEXT("roughness_texture"));
 	BindTexture(TEXT("metallic"), TEXT("metallic_texture"));
 	BindTexture(TEXT("ao"), TEXT("ao_texture"), TEXT("ao_enabled = true"));
-	BindTexture(TEXT("alpha"), TEXT("albedo_texture"));
+	if (!RoleToId.Contains(TEXT("albedo")))
+	{
+		BindTexture(TEXT("alpha"), TEXT("albedo_texture"));
+	}
 
 	if (const int32* OrmId = RoleToId.Find(TEXT("orm")))
 	{
