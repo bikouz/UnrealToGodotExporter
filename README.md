@@ -11,7 +11,7 @@ Deux modes :
 
 | Asset Unreal | Sortie Godot |
 |---|---|
-| Static Mesh, Skeletal Mesh | un `.glb` (géométrie) + un `.tscn` dans `prefabs/` (instance du mesh + collision Unreal si elle existe) |
+| Static Mesh, Skeletal Mesh | un `.glb` (géométrie) + un `.tscn` dans `prefabs/` (instance du mesh) |
 | Level (`.umap`) | `.glb` dans `levels/` (scène glTF : meshes placés, lumières, caméras) |
 | AnimSequence (clic droit sur une seule anim) | un `.glb` d’animation, sans projet Godot (le menu reste « Export to Godot ») |
 | Texture2D | PNG (ou fichier source si encore disponible sur le disque) |
@@ -49,7 +49,7 @@ assets/export/
   levels/      *.glb (maps / .umap)
   materials/   *.tres
   textures/    *.png
-  prefabs/     *.tscn (instance du .glb + CollisionShape3D si collision Unreal)
+  prefabs/     *.tscn (instance du .glb)
   audio/       *.wav / *.ogg
   data/        *.json
 ```
@@ -91,7 +91,6 @@ Les fonctions sont dans la catégorie **Godot Export** :
 | Auto Export On Save | Réexporte un asset supporté dès qu’il est sauvegardé |
 | Prefer Original Source Files | Copie le PNG/WAV/OGG d’import s’il existe encore |
 | Export Prefabs | Écrit un `.tscn` dans `prefabs/` pour chaque mesh |
-| Export Mesh Collision | Reprend la collision simple Unreal (box/sphère/capsule/convex) ou le trimesh si « complex as simple » |
 
 ## Dépendance
 
