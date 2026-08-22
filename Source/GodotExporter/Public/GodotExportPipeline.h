@@ -55,6 +55,7 @@ private:
 	bool ExportMeshOrAnim(UObject* Object, const FAssetData& AssetData, FGodotExportItemResult& Item);
 	void CollectMeshMaterials(UObject* MeshObject, TArray<class UMaterialInterface*>& OutMaterials) const;
 	void ExportMeshSidecars(UObject* MeshObject);
+	bool WriteMeshPrefab(UObject* MeshObject, const FAssetData& AssetData, const FString& MeshAbsolutePath, const FString& MeshResPath, FString& OutPrefabPath) const;
 	bool ExportTexture(class UTexture2D* Texture, const FAssetData& AssetData, FGodotExportItemResult& Item);
 	bool ExportAudio(class USoundWave* SoundWave, const FAssetData& AssetData, FGodotExportItemResult& Item);
 	bool ExportMaterial(class UMaterialInterface* Material, const FAssetData& AssetData, FGodotExportItemResult& Item);

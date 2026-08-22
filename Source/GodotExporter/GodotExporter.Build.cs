@@ -35,6 +35,7 @@ public class GodotExporter : ModuleRules
 			"ApplicationCore",
 			"PropertyEditor",
 			"GLTFExporter",
+			"PhysicsCore",
 			"ImageCore",
 			"ImageWrapper",
 			"RenderCore",

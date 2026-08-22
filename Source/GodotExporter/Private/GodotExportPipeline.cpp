@@ -25,6 +25,8 @@
 #include "HAL/FileManager.h"
 #include "ImageCore.h"
 #include "ImageUtils.h"
+#include "Interfaces/Interface_CollisionDataProvider.h"
+#include "Math/RotationMatrix.h"
 #include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/Char.h"
@@ -36,6 +38,8 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Options/GLTFExportOptions.h"
+#include "PhysicsEngine/BodySetup.h"
+#include "PhysicsEngine/ConvexElem.h"
 #include "Sound/SoundWave.h"
 #include "UObject/Package.h"
 #include "Widgets/SWidget.h"
@@ -129,6 +133,247 @@ namespace GodotExportPrivate
 		return Out;
 	}
 
+	float UniformScaleOrDefault(const UGodotExportSettings* Settings)
+	{
+		return (Settings && Settings->UniformScale > 0.f) ? Settings->UniformScale : 0.01f;
+	}
+
+	FVector UnrealToGodot(const FVector& V)
+	{
+		return FVector(V.X, V.Z, -V.Y);
+	}
+
+	FString FormatGodotFloat(double Value)
+	{
+		return FString::Printf(TEXT("%.6g"), Value);
+	}
+
+	FString FormatGodotVec3(const FVector& V)
+	{
+		return FString::Printf(TEXT("Vector3(%s, %s, %s)"), *FormatGodotFloat(V.X), *FormatGodotFloat(V.Y), *FormatGodotFloat(V.Z));
+	}
+
+	FString FormatGodotTransform(const FVector& BasisX, const FVector& BasisY, const FVector& BasisZ, const FVector& Origin)
+	{
+		return FString::Printf(
+			TEXT("Transform3D(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"),
+			*FormatGodotFloat(BasisX.X), *FormatGodotFloat(BasisY.X), *FormatGodotFloat(BasisZ.X),
+			*FormatGodotFloat(BasisX.Y), *FormatGodotFloat(BasisY.Y), *FormatGodotFloat(BasisZ.Y),
+			*FormatGodotFloat(BasisX.Z), *FormatGodotFloat(BasisY.Z), *FormatGodotFloat(BasisZ.Z),
+			*FormatGodotFloat(Origin.X), *FormatGodotFloat(Origin.Y), *FormatGodotFloat(Origin.Z));
+	}
+
+	void UnrealRotationToGodotBasis(const FRotator& Rotation, FVector& OutX, FVector& OutY, FVector& OutZ)
+	{
+		const FRotationMatrix Rm(Rotation);
+		OutX = UnrealToGodot(Rm.GetScaledAxis(EAxis::X)).GetSafeNormal();
+		OutY = UnrealToGodot(Rm.GetScaledAxis(EAxis::Y)).GetSafeNormal();
+		OutZ = UnrealToGodot(Rm.GetScaledAxis(EAxis::Z)).GetSafeNormal();
+		if (OutX.IsNearlyZero())
+		{
+			OutX = FVector(1.f, 0.f, 0.f);
+		}
+		if (OutY.IsNearlyZero())
+		{
+			OutY = FVector(0.f, 1.f, 0.f);
+		}
+		OutZ = FVector::CrossProduct(OutX, OutY).GetSafeNormal();
+		OutY = FVector::CrossProduct(OutZ, OutX).GetSafeNormal();
+	}
+
+	FString GodotTransformFromUnreal(const FVector& Center, const FRotator& Rotation, float Scale)
+	{
+		FVector Bx, By, Bz;
+		UnrealRotationToGodotBasis(Rotation, Bx, By, Bz);
+		return FormatGodotTransform(Bx, By, Bz, UnrealToGodot(Center) * Scale);
+	}
+
+	FString GodotCapsuleTransformFromUnreal(const FVector& Center, const FRotator& Rotation, float Scale)
+	{
+		const FRotationMatrix Rm(Rotation);
+		FVector Bx = UnrealToGodot(Rm.GetScaledAxis(EAxis::X)).GetSafeNormal();
+		const FVector By = UnrealToGodot(Rm.GetScaledAxis(EAxis::Z)).GetSafeNormal();
+		if (Bx.IsNearlyZero())
+		{
+			Bx = FVector(1.f, 0.f, 0.f);
+		}
+		FVector Bz = FVector::CrossProduct(Bx, By).GetSafeNormal();
+		Bx = FVector::CrossProduct(By, Bz).GetSafeNormal();
+		return FormatGodotTransform(Bx, By, Bz, UnrealToGodot(Center) * Scale);
+	}
+
+	FString SanitizeGodotNodeName(const FString& In)
+	{
+		FString Out = SanitizePathSegment(In, true);
+		if (Out.IsEmpty())
+		{
+			Out = TEXT("Mesh");
+		}
+		if (FChar::IsDigit(Out[0]))
+		{
+			Out = TEXT("_") + Out;
+		}
+		return Out;
+	}
+
+	struct FGodotCollisionShape
+	{
+		FString SubResourceType;
+		FString SubResourceId;
+		FString SubResourceBody;
+		FString NodeTransform;
+	};
+
+	void AppendPrimitiveCollision(const FKAggregateGeom& Agg, float Scale, TArray<FGodotCollisionShape>& OutShapes)
+	{
+		int32 ShapeIndex = OutShapes.Num();
+		for (const FKBoxElem& Box : Agg.BoxElems)
+		{
+			FGodotCollisionShape Shape;
+			Shape.SubResourceType = TEXT("BoxShape3D");
+			Shape.SubResourceId = FString::Printf(TEXT("BoxShape3D_%d"), ShapeIndex);
+			const FVector Size(Box.X * Scale, Box.Y * Scale, Box.Z * Scale);
+			Shape.SubResourceBody = FString::Printf(TEXT("size = %s\n"), *FormatGodotVec3(Size));
+			Shape.NodeTransform = GodotTransformFromUnreal(Box.Center, Box.Rotation, Scale);
+			OutShapes.Add(MoveTemp(Shape));
+			++ShapeIndex;
+		}
+		for (const FKSphereElem& Sphere : Agg.SphereElems)
+		{
+			FGodotCollisionShape Shape;
+			Shape.SubResourceType = TEXT("SphereShape3D");
+			Shape.SubResourceId = FString::Printf(TEXT("SphereShape3D_%d"), ShapeIndex);
+			Shape.SubResourceBody = FString::Printf(TEXT("radius = %s\n"), *FormatGodotFloat(Sphere.Radius * Scale));
+			Shape.NodeTransform = GodotTransformFromUnreal(Sphere.Center, FRotator::ZeroRotator, Scale);
+			OutShapes.Add(MoveTemp(Shape));
+			++ShapeIndex;
+		}
+		for (const FKSphylElem& Capsule : Agg.SphylElems)
+		{
+			FGodotCollisionShape Shape;
+			Shape.SubResourceType = TEXT("CapsuleShape3D");
+			Shape.SubResourceId = FString::Printf(TEXT("CapsuleShape3D_%d"), ShapeIndex);
+			const double Height = (Capsule.Length + 2.0 * Capsule.Radius) * Scale;
+			Shape.SubResourceBody = FString::Printf(
+				TEXT("radius = %s\nheight = %s\n"),
+				*FormatGodotFloat(Capsule.Radius * Scale),
+				*FormatGodotFloat(Height));
+			Shape.NodeTransform = GodotCapsuleTransformFromUnreal(Capsule.Center, Capsule.Rotation, Scale);
+			OutShapes.Add(MoveTemp(Shape));
+			++ShapeIndex;
+		}
+		for (const FKConvexElem& Convex : Agg.ConvexElems)
+		{
+			if (Convex.VertexData.Num() < 4)
+			{
+				continue;
+			}
+			FGodotCollisionShape Shape;
+			Shape.SubResourceType = TEXT("ConvexPolygonShape3D");
+			Shape.SubResourceId = FString::Printf(TEXT("ConvexPolygonShape3D_%d"), ShapeIndex);
+			FString Points = TEXT("PackedVector3Array(");
+			for (int32 Vi = 0; Vi < Convex.VertexData.Num(); ++Vi)
+			{
+				const FVector GodotVert = UnrealToGodot(Convex.GetTransform().TransformPosition(Convex.VertexData[Vi])) * Scale;
+				if (Vi > 0)
+				{
+					Points += TEXT(", ");
+				}
+				Points += FString::Printf(TEXT("%s, %s, %s"), *FormatGodotFloat(GodotVert.X), *FormatGodotFloat(GodotVert.Y), *FormatGodotFloat(GodotVert.Z));
+			}
+			Points += TEXT(")");
+			Shape.SubResourceBody = FString::Printf(TEXT("points = %s\n"), *Points);
+			OutShapes.Add(MoveTemp(Shape));
+			++ShapeIndex;
+		}
+	}
+
+	bool AppendComplexCollision(UStaticMesh* StaticMesh, float Scale, TArray<FGodotCollisionShape>& OutShapes)
+	{
+		if (!StaticMesh || !StaticMesh->ContainsPhysicsTriMeshData(true))
+		{
+			return false;
+		}
+
+		FTriMeshCollisionData TriData;
+		if (!StaticMesh->GetPhysicsTriMeshData(&TriData, true) || TriData.Vertices.Num() < 3 || TriData.Indices.Num() < 1)
+		{
+			return false;
+		}
+
+		constexpr int32 MaxTriangles = 20000;
+		if (TriData.Indices.Num() > MaxTriangles)
+		{
+			UE_LOG(LogGodotExporter, Warning, TEXT("Skipping complex collision for %s (%d triangles, max %d)"), *StaticMesh->GetName(), TriData.Indices.Num(), MaxTriangles);
+			return false;
+		}
+
+		FGodotCollisionShape Shape;
+		Shape.SubResourceType = TEXT("ConcavePolygonShape3D");
+		Shape.SubResourceId = FString::Printf(TEXT("ConcavePolygonShape3D_%d"), OutShapes.Num());
+		FString Data = TEXT("PackedVector3Array(");
+		bool bFirst = true;
+		for (const FTriIndices& Tri : TriData.Indices)
+		{
+			const int32 Corners[3] = { Tri.v0, Tri.v1, Tri.v2 };
+			for (int32 C = 0; C < 3; ++C)
+			{
+				if (!TriData.Vertices.IsValidIndex(Corners[C]))
+				{
+					continue;
+				}
+				const FVector GodotVert = UnrealToGodot(FVector(TriData.Vertices[Corners[C]])) * Scale;
+				if (!bFirst)
+				{
+					Data += TEXT(", ");
+				}
+				bFirst = false;
+				Data += FString::Printf(TEXT("%s, %s, %s"), *FormatGodotFloat(GodotVert.X), *FormatGodotFloat(GodotVert.Y), *FormatGodotFloat(GodotVert.Z));
+			}
+		}
+		Data += TEXT(")");
+		Shape.SubResourceBody = FString::Printf(TEXT("data = %s\n"), *Data);
+		OutShapes.Add(MoveTemp(Shape));
+		return true;
+	}
+
+	void CollectStaticMeshCollision(UStaticMesh* StaticMesh, const UGodotExportSettings* Settings, TArray<FGodotCollisionShape>& OutShapes)
+	{
+		if (!StaticMesh || !Settings || !Settings->bExportMeshCollision)
+		{
+			return;
+		}
+
+		UBodySetup* BodySetup = StaticMesh->GetBodySetup();
+		if (!BodySetup)
+		{
+			return;
+		}
+
+		const float Scale = UniformScaleOrDefault(Settings);
+		const ECollisionTraceFlag Flag = BodySetup->GetCollisionTraceFlag();
+		const FKAggregateGeom& Agg = BodySetup->AggGeom;
+		const int32 SimpleCount = Agg.BoxElems.Num() + Agg.SphereElems.Num() + Agg.SphylElems.Num() + Agg.ConvexElems.Num();
+		const bool bComplexAsSimple = Flag == CTF_UseComplexAsSimple;
+
+		if (bComplexAsSimple)
+		{
+			if (!AppendComplexCollision(StaticMesh, Scale, OutShapes) && SimpleCount > 0)
+			{
+				AppendPrimitiveCollision(Agg, Scale, OutShapes);
+			}
+			return;
+		}
+
+		if (SimpleCount > 0)
+		{
+			AppendPrimitiveCollision(Agg, Scale, OutShapes);
+			return;
+		}
+
+		AppendComplexCollision(StaticMesh, Scale, OutShapes);
+	}
+
 	bool IsEngineOrScriptPackage(const FString& PackageName)
 	{
 		return PackageName.StartsWith(TEXT("/Engine"))
@@ -209,6 +454,10 @@ namespace GodotExportPrivate
 		if (E == TEXT("glb") || E == TEXT("gltf"))
 		{
 			return TEXT("meshes");
+		}
+		if (E == TEXT("tscn"))
+		{
+			return TEXT("prefabs");
 		}
 		if (E == TEXT("wav") || E == TEXT("ogg") || E == TEXT("mp3"))
 		{
@@ -2017,8 +2266,88 @@ bool FGodotExportPipeline::ExportMeshOrAnim(UObject* Object, const FAssetData& A
 	}
 	else
 	{
-		Item.Message = TEXT("Exported mesh .glb (geometry) referencing textures/; materials .tres");
+		FString PrefabPath;
+		if (WriteMeshPrefab(Object, AssetData, AbsolutePath, Item.OutputPath, PrefabPath))
+		{
+			Item.Message = TEXT("Exported mesh .glb, materials .tres, prefab .tscn");
+		}
+		else
+		{
+			Item.Message = TEXT("Exported mesh .glb (geometry) referencing textures/; materials .tres");
+		}
 	}
+	return true;
+}
+
+bool FGodotExportPipeline::WriteMeshPrefab(
+	UObject* MeshObject,
+	const FAssetData& AssetData,
+	const FString& MeshAbsolutePath,
+	const FString& MeshResPath,
+	FString& OutPrefabPath) const
+{
+	if (!Settings || !Settings->bExportPrefabs || !MeshObject)
+	{
+		return false;
+	}
+	if (MeshObject->IsA<UAnimSequence>())
+	{
+		return false;
+	}
+
+	FString PrefabAbs;
+	FString MeshPathForScene = MeshResPath;
+	if (bFlattenSidecars || !OutputPathOverride.IsEmpty())
+	{
+		PrefabAbs = FPaths::ChangeExtension(MeshAbsolutePath, TEXT("tscn"));
+		MeshPathForScene = FPaths::GetCleanFilename(MeshAbsolutePath);
+	}
+	else
+	{
+		PrefabAbs = PackageToAbsolutePath(GodotProject, AssetData.PackageName.ToString(), TEXT("tscn"), Settings, AssetData);
+	}
+
+	TArray<GodotExportPrivate::FGodotCollisionShape> Shapes;
+	if (UStaticMesh* StaticMesh = Cast<UStaticMesh>(MeshObject))
+	{
+		GodotExportPrivate::CollectStaticMeshCollision(StaticMesh, Settings, Shapes);
+	}
+
+	const FString NodeName = GodotExportPrivate::SanitizeGodotNodeName(AssetData.AssetName.ToString());
+	const bool bHasCollision = Shapes.Num() > 0;
+	const FString RootType = bHasCollision ? TEXT("StaticBody3D") : TEXT("Node3D");
+	const int32 LoadSteps = 2 + Shapes.Num();
+
+	FString Contents;
+	Contents += FString::Printf(TEXT("[gd_scene load_steps=%d format=3]\n\n"), LoadSteps);
+	Contents += FString::Printf(TEXT("[ext_resource type=\"PackedScene\" path=\"%s\" id=\"1_mesh\"]\n\n"), *MeshPathForScene);
+	for (const GodotExportPrivate::FGodotCollisionShape& Shape : Shapes)
+	{
+		Contents += FString::Printf(TEXT("[sub_resource type=\"%s\" id=\"%s\"]\n"), *Shape.SubResourceType, *Shape.SubResourceId);
+		Contents += Shape.SubResourceBody;
+		Contents += TEXT("\n");
+	}
+	Contents += FString::Printf(TEXT("[node name=\"%s\" type=\"%s\"]\n\n"), *NodeName, *RootType);
+	Contents += TEXT("[node name=\"Model\" parent=\".\" instance=ExtResource(\"1_mesh\")]\n");
+	for (int32 Index = 0; Index < Shapes.Num(); ++Index)
+	{
+		const GodotExportPrivate::FGodotCollisionShape& Shape = Shapes[Index];
+		Contents += FString::Printf(TEXT("\n[node name=\"CollisionShape3D_%d\" type=\"CollisionShape3D\" parent=\".\"]\n"), Index);
+		if (!Shape.NodeTransform.IsEmpty())
+		{
+			Contents += FString::Printf(TEXT("transform = %s\n"), *Shape.NodeTransform);
+		}
+		Contents += FString::Printf(TEXT("shape = SubResource(\"%s\")\n"), *Shape.SubResourceId);
+	}
+
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(PrefabAbs), true);
+	if (!FFileHelper::SaveStringToFile(Contents, *PrefabAbs, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	{
+		UE_LOG(LogGodotExporter, Warning, TEXT("Failed to write prefab %s"), *PrefabAbs);
+		return false;
+	}
+
+	OutPrefabPath = GodotExportPrivate::ToResPathFromAbsolute(GodotProject, PrefabAbs);
 	return true;
 }
 

@@ -99,4 +99,12 @@ public:
 	/** Generate Godot StandardMaterial3D .tres files from Unreal materials. */
 	UPROPERTY(Config, EditAnywhere, Category = "Conversion")
 	bool bGenerateGodotMaterials = true;
+
+	/** Write a Godot PackedScene .tscn in prefabs/ for each static or skeletal mesh. */
+	UPROPERTY(Config, EditAnywhere, Category = "Conversion")
+	bool bExportPrefabs = true;
+
+	/** Add CollisionShape3D nodes from Unreal simple collision (and complex trimesh when used as simple). */
+	UPROPERTY(Config, EditAnywhere, Category = "Conversion")
+	bool bExportMeshCollision = true;
 };
