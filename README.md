@@ -6,8 +6,8 @@ Plugin éditeur Unreal Engine 5.7 qui exporte automatiquement des assets Unreal 
 
 Deux modes :
 
-- **Tools → Godot Exporter** : écrit dans le projet Godot, sous `export/meshes|anims|levels|materials|textures`.
-- **Clic droit → Export to Godot** : choisit un dossier, crée `export/` avec ces sous-dossiers (à glisser dans Godot). Pas de `project.godot`. Seuls le mesh choisi et ses matériaux / textures **assignés** sont exportés.
+- **Tools → Godot Exporter** : écrit dans le projet Godot, sous `assets/export/meshes|anims|levels|materials|textures`.
+- **Clic droit → Export to Godot** : choisit un dossier, crée `assets/export/` avec ces sous-dossiers (à glisser dans Godot). Pas de `project.godot`. Seuls le mesh choisi et ses matériaux / textures **assignés** sont exportés.
 
 | Asset Unreal | Sortie Godot |
 |---|---|
@@ -40,18 +40,20 @@ Un `project.godot` et un `godot_export_manifest.json` sont écrits **uniquement*
 
 1. Clic droit → **Export to Godot**.
 2. Choisis un dossier (Downloads, Bureau, etc.).
-3. Un sous-dossier `export/` est créé, avec la hiérarchie Unreal :
+3. Un sous-dossier `assets/export/` est créé :
 
 ```text
-export/
+assets/export/
   meshes/      *.glb (static / skeletal, textures en référence, pas de .bin)
   anims/       *.glb (AnimSequence)
   levels/      *.glb (maps / .umap)
   materials/   *.tres
   textures/    *.png
+  audio/       *.wav / *.ogg
+  data/        *.json
 ```
 
-4. Glisse le dossier `export` à la racine du projet Godot. Les chemins `res://export/...` restent valides.
+4. Glisse le dossier `assets` à la racine du projet Godot (ou exporte directement dans le projet). Les chemins `res://assets/export/...` restent valides.
 
 Un mesh n’embarque **pas** les PNG (ça alourdirait le fichier). Le `.glb` contient la géométrie et **pointe** vers `textures/`, donc le preview Godot les affiche. Un seul fichier à déplacer (plus de `.bin` orphelin). La scène utilise les `.tres` (`use_external`).
 
@@ -80,7 +82,7 @@ Les fonctions sont dans la catégorie **Godot Export** :
 | Option | Rôle |
 |---|---|
 | Godot Project Folder | Dossier du projet Godot (Tools → Godot Exporter) |
-| Export Subfolder | Sous-dossier créé à la destination (`export` par défaut) |
+| Export Subfolder | Sous-dossier créé à la destination (`assets/export` par défaut) |
 | Source Content Path | Racine Unreal pour Export All (`/Game` par défaut) |
 | Use Binary Glb | `.glb` (recommandé) ou `.gltf` + sidecars |
 | Include Dependencies | Pour un mesh / matériau / level, exporte aussi les textures et matériaux référencés. Une AnimSequence n’exporte que l’animation. |

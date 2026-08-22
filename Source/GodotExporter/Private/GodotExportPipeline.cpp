@@ -614,7 +614,7 @@ FGodotExportPipeline::FGodotExportPipeline(const UGodotExportSettings* InSetting
 
 FString FGodotExportPipeline::PackageToResPath(const FString& PackageName, const FString& Extension, const UGodotExportSettings* Settings, const FAssetData& Asset)
 {
-	FString Subfolder = (Settings && !Settings->ExportSubfolder.IsEmpty()) ? Settings->ExportSubfolder : TEXT("export");
+	FString Subfolder = (Settings && !Settings->ExportSubfolder.IsEmpty()) ? Settings->ExportSubfolder : TEXT("assets/export");
 	Subfolder.ReplaceInline(TEXT("\\"), TEXT("/"));
 	Subfolder.RemoveFromStart(TEXT("/"));
 	Subfolder.RemoveFromEnd(TEXT("/"));
@@ -887,7 +887,7 @@ FGodotExportResult FGodotExportPipeline::ExportAssetsStandalone(
 	}
 
 	FString Folder;
-	if (!PromptForDirectory(TEXT("Select destination (an 'export' folder will be created)"), Folder))
+	if (!PromptForDirectory(TEXT("Select destination (an 'assets/export' folder will be created)"), Folder))
 	{
 		FGodotExportResult Cancelled;
 		FGodotExportItemResult Item;
@@ -908,7 +908,7 @@ FGodotExportResult FGodotExportPipeline::ExportContentPathStandalone(
 {
 	const UGodotExportSettings* Resolved = Settings ? Settings : GetDefault<UGodotExportSettings>();
 	FString Folder;
-	if (!PromptForDirectory(TEXT("Select destination (an 'export' folder will be created)"), Folder))
+	if (!PromptForDirectory(TEXT("Select destination (an 'assets/export' folder will be created)"), Folder))
 	{
 		return FGodotExportResult();
 	}
@@ -1314,7 +1314,7 @@ void FGodotExportPipeline::CleanupGltfImagesInMeshFolder(const FString& GltfAbso
 	const FString MeshDir = FPaths::GetPath(GltfAbsolutePath);
 	const bool bIsGlb = FPaths::GetExtension(GltfAbsolutePath, false).Equals(TEXT("glb"), ESearchCase::IgnoreCase);
 
-	FString Subfolder = (Settings && !Settings->ExportSubfolder.IsEmpty()) ? Settings->ExportSubfolder : TEXT("export");
+	FString Subfolder = (Settings && !Settings->ExportSubfolder.IsEmpty()) ? Settings->ExportSubfolder : TEXT("assets/export");
 	const FString TexturesDir = FPaths::Combine(GodotProject, Subfolder, TEXT("textures"));
 
 	TArray<FString> Found;

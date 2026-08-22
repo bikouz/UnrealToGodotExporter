@@ -20,9 +20,9 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Output", meta = (DisplayName = "Godot Project Folder"))
 	FDirectoryPath GodotProjectPath;
 
-	/** Subfolder created at the destination. Drag this folder into Godot to keep Unreal's content hierarchy. */
+	/** Subfolder created at the destination (assets/export/meshes, materials, textures, anims, ...). */
 	UPROPERTY(Config, EditAnywhere, Category = "Output")
-	FString ExportSubfolder = TEXT("export");
+	FString ExportSubfolder = TEXT("assets/export");
 
 	/** Unreal content root to export when using Export All. */
 	UPROPERTY(Config, EditAnywhere, Category = "Output")
