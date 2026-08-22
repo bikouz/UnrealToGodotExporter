@@ -391,6 +391,56 @@ namespace GodotExportPrivate
 			return Albedo;
 		}
 
+		// Instance vector overrides win, including white: a MIC that tints to white
+		// must not fall back to a coloured parent default.
+		{
+			UMaterialInterface* Current = Material;
+			int32 Depth = 0;
+			while (UMaterialInstance* Inst = Cast<UMaterialInstance>(Current))
+			{
+				int32 BestLocal = 0;
+				FLinearColor Local = FLinearColor::White;
+				FString LocalName;
+				bool bLocal = false;
+				for (const FVectorParameterValue& Param : Inst->VectorParameterValues)
+				{
+					const FString Name = Param.ParameterInfo.Name.ToString();
+					const int32 Score = AlbedoNameScore(Name);
+					if (Score <= 0)
+					{
+						continue;
+					}
+					if (!bLocal || Score > BestLocal)
+					{
+						BestLocal = Score;
+						Local = Param.ParameterValue;
+						LocalName = Name;
+						bLocal = true;
+					}
+				}
+				if (bLocal)
+				{
+					UE_LOG(
+						LogGodotExporter,
+						Display,
+						TEXT("Material %s albedo_color=(%f, %f, %f, %f) MIC override '%s' depth=%d"),
+						*Material->GetName(),
+						Local.R,
+						Local.G,
+						Local.B,
+						Local.A,
+						*LocalName,
+						Depth);
+					return Local;
+				}
+				Current = Inst->Parent;
+				if (++Depth > 16)
+				{
+					break;
+				}
+			}
+		}
+
 		int32 BestScore = 0;
 		bool bFoundNonWhite = false;
 		FString ChosenName;
@@ -1508,7 +1558,54 @@ void FGodotExportPipeline::GatherMaterialTextureResPaths(UMaterialInterface* Mat
 		return Role;
 	};
 
-	// Instance overrides first: GetTextureParameterValue resolves MIC values, not the parent defaults.
+	TArray<UTexture*> UnnamedInstanceTextures;
+
+	{
+		UMaterialInterface* Current = Material;
+		int32 Depth = 0;
+		while (UMaterialInstance* Inst = Cast<UMaterialInstance>(Current))
+		{
+			if (Inst->Parent)
+			{
+				Inst->Parent->ConditionalPostLoad();
+			}
+			const int32 ScoreBase = 300 - Depth * 10;
+			for (const FTextureParameterValue& Param : Inst->TextureParameterValues)
+			{
+				UTexture* Texture = Param.ParameterValue;
+				if (!Texture)
+				{
+					continue;
+				}
+				const FString ParamName = Param.ParameterInfo.Name.ToString();
+				FString Role = RoleFromParam(ParamName, Texture);
+				if (Role.IsEmpty() && Depth == 0)
+				{
+					UnnamedInstanceTextures.AddUnique(Texture);
+				}
+				if (!Role.IsEmpty())
+				{
+					Consider(Role, Texture, ScoreBase + GodotExportPrivate::AlbedoNameScore(ParamName));
+				}
+				UE_LOG(
+					LogGodotExporter,
+					Display,
+					TEXT("MIC %s override '%s' -> %s (%s) depth=%d"),
+					*Material->GetName(),
+					*ParamName,
+					*Role,
+					*Texture->GetName(),
+					Depth);
+			}
+			Current = Inst->Parent;
+			if (++Depth > 16)
+			{
+				break;
+			}
+		}
+	}
+
+	// GetTextureParameterValue walks parent chain; keep as fallback for params without a stored override entry.
 	TArray<FMaterialParameterInfo> TextureInfos;
 	TArray<FGuid> TextureIds;
 	Material->GetAllTextureParameterInfo(TextureInfos, TextureIds);
@@ -1602,6 +1699,11 @@ void FGodotExportPipeline::GatherMaterialTextureResPaths(UMaterialInterface* Mat
 		}
 	}
 
+	if (!BestByRole.Contains(TEXT("albedo")) && UnnamedInstanceTextures.Num() > 0)
+	{
+		Consider(TEXT("albedo"), UnnamedInstanceTextures[0], 5);
+	}
+
 	for (const TPair<FString, TPair<int32, UTexture*>>& Pair : BestByRole)
 	{
 		const FString ResPath = ExportIfNeeded(Pair.Value.Value);
@@ -1644,11 +1746,36 @@ bool FGodotExportPipeline::PatchGltfWithExternalTextures(const FString& GltfAbso
 	}
 
 	TMap<FString, UMaterialInterface*> MatsByName;
+	TMap<FString, TArray<UMaterialInterface*>> MatsByParentName;
 	for (UMaterialInterface* Material : Materials)
 	{
-		if (Material)
+		if (!Material)
 		{
-			MatsByName.Add(Material->GetName(), Material);
+			continue;
+		}
+		MatsByName.Add(Material->GetName(), Material);
+		if (UMaterialInstance* Inst = Cast<UMaterialInstance>(Material))
+		{
+			if (Inst->Parent)
+			{
+				MatsByParentName.FindOrAdd(Inst->Parent->GetName()).AddUnique(Material);
+			}
+		}
+	}
+
+	TArray<UMaterialInterface*> SlotMaterials;
+	if (USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(MeshObject))
+	{
+		for (const FSkeletalMaterial& Slot : SkeletalMesh->GetMaterials())
+		{
+			SlotMaterials.Add(Slot.MaterialInterface);
+		}
+	}
+	else if (UStaticMesh* StaticMesh = Cast<UStaticMesh>(MeshObject))
+	{
+		for (const FStaticMaterial& Slot : StaticMesh->GetStaticMaterials())
+		{
+			SlotMaterials.Add(Slot.MaterialInterface);
 		}
 	}
 
@@ -1717,8 +1844,9 @@ bool FGodotExportPipeline::PatchGltfWithExternalTextures(const FString& GltfAbso
 	}
 
 	TArray<TSharedPtr<FJsonValue>> JsonMaterials = Root->GetArrayField(TEXT("materials"));
-	for (const TSharedPtr<FJsonValue>& MatValue : JsonMaterials)
+	for (int32 JsonIndex = 0; JsonIndex < JsonMaterials.Num(); ++JsonIndex)
 	{
+		const TSharedPtr<FJsonValue>& MatValue = JsonMaterials[JsonIndex];
 		TSharedPtr<FJsonObject> JsonMat = MatValue->AsObject();
 		if (!JsonMat.IsValid())
 		{
@@ -1738,10 +1866,38 @@ bool FGodotExportPipeline::PatchGltfWithExternalTextures(const FString& GltfAbso
 				}
 			}
 		}
+		// Unreal glTF often names the material after the parent UMaterial, not the MIC.
+		if (!Material)
+		{
+			if (const TArray<UMaterialInterface*>* Hits = MatsByParentName.Find(MatName))
+			{
+				if (Hits->Num() == 1)
+				{
+					Material = (*Hits)[0];
+				}
+			}
+		}
+		if (!Material)
+		{
+			for (const TPair<FString, TArray<UMaterialInterface*>>& Pair : MatsByParentName)
+			{
+				if (Pair.Value.Num() == 1 && (MatName.StartsWith(Pair.Key) || Pair.Key.StartsWith(MatName)))
+				{
+					Material = Pair.Value[0];
+					break;
+				}
+			}
+		}
+		if (!Material && SlotMaterials.IsValidIndex(JsonIndex))
+		{
+			Material = SlotMaterials[JsonIndex];
+		}
 		if (!Material)
 		{
 			continue;
 		}
+
+		JsonMat->SetStringField(TEXT("name"), Material->GetName());
 
 		TMap<FString, FString> RoleToRes;
 		GatherMaterialTextureResPaths(Material, RoleToRes);
@@ -2339,16 +2495,53 @@ bool FGodotExportPipeline::ExportMaterial(UMaterialInterface* Material, const FA
 
 	float Metallic = 0.f;
 	float Roughness = 1.f;
-	for (const TPair<FString, float>& Pair : ScalarParams)
+	bool bGotMetallic = false;
+	bool bGotRoughness = false;
 	{
-		const FString Role = GodotExportPrivate::GuessTextureRole(Pair.Key);
-		if (Role == TEXT("metallic"))
+		UMaterialInterface* Current = Material;
+		int32 Depth = 0;
+		while (UMaterialInstance* Inst = Cast<UMaterialInstance>(Current))
 		{
-			Metallic = Pair.Value;
+			for (const FScalarParameterValue& Param : Inst->ScalarParameterValues)
+			{
+				const FString Role = GodotExportPrivate::GuessTextureRole(Param.ParameterInfo.Name.ToString());
+				if (Role == TEXT("metallic") && !bGotMetallic)
+				{
+					Metallic = Param.ParameterValue;
+					bGotMetallic = true;
+				}
+				else if (Role == TEXT("roughness") && !bGotRoughness)
+				{
+					Roughness = Param.ParameterValue;
+					bGotRoughness = true;
+				}
+			}
+			if (bGotMetallic && bGotRoughness)
+			{
+				break;
+			}
+			Current = Inst->Parent;
+			if (++Depth > 16)
+			{
+				break;
+			}
 		}
-		else if (Role == TEXT("roughness"))
+	}
+	if (!bGotMetallic || !bGotRoughness)
+	{
+		for (const TPair<FString, float>& Pair : ScalarParams)
 		{
-			Roughness = Pair.Value;
+			const FString Role = GodotExportPrivate::GuessTextureRole(Pair.Key);
+			if (Role == TEXT("metallic") && !bGotMetallic)
+			{
+				Metallic = Pair.Value;
+				bGotMetallic = true;
+			}
+			else if (Role == TEXT("roughness") && !bGotRoughness)
+			{
+				Roughness = Pair.Value;
+				bGotRoughness = true;
+			}
 		}
 	}
 
