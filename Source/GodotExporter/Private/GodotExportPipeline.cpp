@@ -1738,6 +1738,11 @@ void FGodotExportPipeline::GatherMaterialTextureResPaths(UMaterialInterface* Mat
 		{
 			return;
 		}
+		const FString TexRole = GodotExportPrivate::GuessTextureRole(Texture->GetName());
+		if (Role == TEXT("albedo") && (TexRole == TEXT("emission") || TexRole == TEXT("normal") || TexRole == TEXT("orm")))
+		{
+			return;
+		}
 		if (const TPair<int32, UTexture*>* Existing = BestByRole.Find(Role))
 		{
 			if (Score <= Existing->Key)
@@ -1750,10 +1755,17 @@ void FGodotExportPipeline::GatherMaterialTextureResPaths(UMaterialInterface* Mat
 
 	auto RoleFromParam = [](const FString& ParamName, const UTexture* Texture) -> FString
 	{
-		FString Role = GodotExportPrivate::GuessTextureRole(ParamName);
-		if (Role.IsEmpty() && Texture)
+		const FString FromTex = Texture ? GodotExportPrivate::GuessTextureRole(Texture->GetName()) : FString();
+		// Synty-style atlases: T_Emissive_* must stay emission even if the MIC param is named Texture/Diffuse.
+		if (FromTex == TEXT("emission") || FromTex == TEXT("normal") || FromTex == TEXT("orm")
+			|| FromTex == TEXT("metallic") || FromTex == TEXT("roughness") || FromTex == TEXT("ao"))
 		{
-			Role = GodotExportPrivate::GuessTextureRole(Texture->GetName());
+			return FromTex;
+		}
+		FString Role = GodotExportPrivate::GuessTextureRole(ParamName);
+		if (Role.IsEmpty())
+		{
+			Role = FromTex;
 		}
 		if (Role.IsEmpty() && Texture && Texture->CompressionSettings == TC_Normalmap)
 		{
@@ -1877,6 +1889,10 @@ void FGodotExportPipeline::GatherMaterialTextureResPaths(UMaterialInterface* Mat
 			}
 			else if (Chain.Value == BitAlbedo)
 			{
+				if (GodotExportPrivate::GuessTextureRole(Texture->GetName()) == TEXT("emission"))
+				{
+					continue;
+				}
 				Role = TEXT("albedo");
 			}
 			else if (Chain.Value == BitEmissive)
@@ -1903,9 +1919,39 @@ void FGodotExportPipeline::GatherMaterialTextureResPaths(UMaterialInterface* Mat
 		}
 	}
 
-	if (!BestByRole.Contains(TEXT("albedo")) && UnnamedInstanceTextures.Num() > 0)
 	{
-		Consider(TEXT("albedo"), UnnamedInstanceTextures[0], 5);
+		TArray<UTexture*> UsedTextures;
+		Material->GetUsedTextures(UsedTextures, EMaterialQualityLevel::High, true, ERHIFeatureLevel::SM5, true);
+		for (UTexture* Texture : UsedTextures)
+		{
+			if (!Texture)
+			{
+				continue;
+			}
+			FString Role = GodotExportPrivate::GuessTextureRole(Texture->GetName());
+			if (Role.IsEmpty() && Texture->CompressionSettings == TC_Normalmap)
+			{
+				Role = TEXT("normal");
+			}
+			if (Role.IsEmpty())
+			{
+				Role = TEXT("albedo");
+			}
+			Consider(Role, Texture, Role == TEXT("albedo") ? 15 : 25);
+		}
+	}
+
+	if (!BestByRole.Contains(TEXT("albedo")))
+	{
+		for (UTexture* Texture : UnnamedInstanceTextures)
+		{
+			if (GodotExportPrivate::GuessTextureRole(Texture->GetName()) == TEXT("emission"))
+			{
+				continue;
+			}
+			Consider(TEXT("albedo"), Texture, 5);
+			break;
+		}
 	}
 
 	for (const TPair<FString, TPair<int32, UTexture*>>& Pair : BestByRole)
@@ -2796,10 +2842,6 @@ bool FGodotExportPipeline::ExportMaterial(UMaterialInterface* Material, const FA
 		{
 			Albedo = EmissiveColor;
 			Albedo.A = 1.f;
-		}
-		if (!bHasAlbedoTexture && bHasEmissionTexture)
-		{
-			RoleToRes.Add(TEXT("albedo"), RoleToRes.FindChecked(TEXT("emission")));
 		}
 	}
 
