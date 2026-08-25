@@ -103,4 +103,8 @@ public:
 	/** Write a Godot PackedScene .tscn in prefabs/ for each static or skeletal mesh. */
 	UPROPERTY(Config, EditAnywhere, Category = "Conversion")
 	bool bExportPrefabs = true;
+
+	/** Static mesh .glb.import: generate StaticBody3D + single convex collision (Godot physics/shape_type = 1). */
+	UPROPERTY(Config, EditAnywhere, Category = "Conversion")
+	bool bGenerateStaticMeshPhysics = true;
 };

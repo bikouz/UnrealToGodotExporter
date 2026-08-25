@@ -144,6 +144,126 @@ namespace GodotExportPrivate
 		return Out;
 	}
 
+	uint32 ReadGlbU32(const TArray<uint8>& Bytes, int32 Offset)
+	{
+		if (Bytes.Num() < Offset + 4)
+		{
+			return 0;
+		}
+		return static_cast<uint32>(Bytes[Offset])
+			| (static_cast<uint32>(Bytes[Offset + 1]) << 8)
+			| (static_cast<uint32>(Bytes[Offset + 2]) << 16)
+			| (static_cast<uint32>(Bytes[Offset + 3]) << 24);
+	}
+
+	bool LoadGltfJsonString(const FString& GltfOrGlbPath, FString& OutJson)
+	{
+		const FString Ext = FPaths::GetExtension(GltfOrGlbPath, false).ToLower();
+		if (Ext == TEXT("gltf"))
+		{
+			return FFileHelper::LoadFileToString(OutJson, *GltfOrGlbPath);
+		}
+		if (Ext != TEXT("glb") || !FPaths::FileExists(GltfOrGlbPath))
+		{
+			return false;
+		}
+
+		TArray<uint8> Bytes;
+		if (!FFileHelper::LoadFileToArray(Bytes, *GltfOrGlbPath) || Bytes.Num() < 20)
+		{
+			return false;
+		}
+		if (ReadGlbU32(Bytes, 0) != 0x46546C67)
+		{
+			return false;
+		}
+		const uint32 JsonLen = ReadGlbU32(Bytes, 12);
+		const uint32 JsonType = ReadGlbU32(Bytes, 16);
+		if (JsonType != 0x4E4F534A || Bytes.Num() < 20 + static_cast<int32>(JsonLen))
+		{
+			return false;
+		}
+		FUTF8ToTCHAR Convert(reinterpret_cast<const ANSICHAR*>(Bytes.GetData() + 20), static_cast<int32>(JsonLen));
+		OutJson = FString(Convert.Length(), Convert.Get());
+		return !OutJson.IsEmpty();
+	}
+
+	void CollectGltfMeshNodeNames(const FString& GltfOrGlbPath, TArray<FString>& OutNames)
+	{
+		FString Json;
+		if (!LoadGltfJsonString(GltfOrGlbPath, Json))
+		{
+			return;
+		}
+
+		TSharedPtr<FJsonObject> Root;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Json);
+		if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid() || !Root->HasTypedField<EJson::Array>(TEXT("nodes")))
+		{
+			return;
+		}
+
+		const TArray<TSharedPtr<FJsonValue>>& Nodes = Root->GetArrayField(TEXT("nodes"));
+
+		TFunction<void(int32, const FString&)> Walk = [&](int32 Index, const FString& Prefix)
+		{
+			if (!Nodes.IsValidIndex(Index))
+			{
+				return;
+			}
+			const TSharedPtr<FJsonObject> Node = Nodes[Index]->AsObject();
+			if (!Node.IsValid())
+			{
+				return;
+			}
+
+			FString Name;
+			if (!Node->TryGetStringField(TEXT("name"), Name) || Name.IsEmpty())
+			{
+				Name = TEXT("Mesh");
+			}
+			const FString Path = Prefix.IsEmpty() ? Name : (Prefix + TEXT("/") + Name);
+			if (Node->HasField(TEXT("mesh")))
+			{
+				OutNames.AddUnique(Path);
+			}
+			if (Node->HasTypedField<EJson::Array>(TEXT("children")))
+			{
+				for (const TSharedPtr<FJsonValue>& Child : Node->GetArrayField(TEXT("children")))
+				{
+					Walk(static_cast<int32>(Child->AsNumber()), Path);
+				}
+			}
+		};
+
+		TArray<int32> SceneRoots;
+		if (Root->HasTypedField<EJson::Array>(TEXT("scenes")))
+		{
+			int32 SceneIndex = 0;
+			Root->TryGetNumberField(TEXT("scene"), SceneIndex);
+			const TArray<TSharedPtr<FJsonValue>>& Scenes = Root->GetArrayField(TEXT("scenes"));
+			if (Scenes.IsValidIndex(SceneIndex))
+			{
+				const TSharedPtr<FJsonObject> Scene = Scenes[SceneIndex]->AsObject();
+				if (Scene.IsValid() && Scene->HasTypedField<EJson::Array>(TEXT("nodes")))
+				{
+					for (const TSharedPtr<FJsonValue>& SceneNode : Scene->GetArrayField(TEXT("nodes")))
+					{
+						SceneRoots.Add(static_cast<int32>(SceneNode->AsNumber()));
+					}
+				}
+			}
+		}
+		if (SceneRoots.Num() == 0)
+		{
+			SceneRoots.Add(0);
+		}
+		for (const int32 RootIndex : SceneRoots)
+		{
+			Walk(RootIndex, FString());
+		}
+	}
+
 	bool IsEngineOrScriptPackage(const FString& PackageName)
 	{
 		return PackageName.StartsWith(TEXT("/Engine"))
@@ -1664,36 +1784,76 @@ void FGodotExportPipeline::WriteGodotGltfImportFile(const FString& GltfAbsoluteP
 	{
 		CollectMeshMaterials(MeshObject, Materials);
 	}
-	if (Materials.Num() > 0)
+
+	const bool bGeneratePhysics = MeshObject
+		&& MeshObject->IsA<UStaticMesh>()
+		&& (!Settings || Settings->bGenerateStaticMeshPhysics);
+
+	TArray<FString> PhysicsNodeNames;
+	if (bGeneratePhysics)
+	{
+		GodotExportPrivate::CollectGltfMeshNodeNames(GltfAbsolutePath, PhysicsNodeNames);
+		if (PhysicsNodeNames.Num() == 0)
+		{
+			PhysicsNodeNames.Add(TEXT("Mesh"));
+			PhysicsNodeNames.AddUnique(MeshObject->GetName());
+		}
+	}
+
+	if (Materials.Num() > 0 || PhysicsNodeNames.Num() > 0)
 	{
 		Contents += TEXT("_subresources={\n");
-		Contents += TEXT("\"materials\": {\n");
-		for (int32 Index = 0; Index < Materials.Num(); ++Index)
+		if (Materials.Num() > 0)
 		{
-			UMaterialInterface* Material = Materials[Index];
-			if (!Material)
+			Contents += TEXT("\"materials\": {\n");
+			for (int32 Index = 0; Index < Materials.Num(); ++Index)
 			{
-				continue;
-			}
+				UMaterialInterface* Material = Materials[Index];
+				if (!Material)
+				{
+					continue;
+				}
 
-			FString TresPath;
-			if (const FString* Existing = ExportedResPaths.Find(Material->GetOutermost()->GetFName()))
+				FString TresPath;
+				if (const FString* Existing = ExportedResPaths.Find(Material->GetOutermost()->GetFName()))
+				{
+					TresPath = *Existing;
+				}
+				else
+				{
+					TresPath = PackageToResPath(Material->GetOutermost()->GetName(), TEXT("tres"), Settings, FAssetData(Material));
+				}
+
+				const FString MatName = GodotExportPrivate::EscapeJson(Material->GetName());
+				const FString TresEscaped = GodotExportPrivate::EscapeJson(TresPath);
+				Contents += FString::Printf(TEXT("\"%s\": {\n"), *MatName);
+				Contents += TEXT("\"use_external/enabled\": true,\n");
+				Contents += FString::Printf(TEXT("\"use_external/path\": \"%s\"\n"), *TresEscaped);
+				Contents += (Index + 1 < Materials.Num()) ? TEXT("},\n") : TEXT("}\n");
+			}
+			Contents += TEXT("}");
+			if (PhysicsNodeNames.Num() > 0)
 			{
-				TresPath = *Existing;
+				Contents += TEXT(",\n");
 			}
 			else
 			{
-				TresPath = PackageToResPath(Material->GetOutermost()->GetName(), TEXT("tres"), Settings, FAssetData(Material));
+				Contents += TEXT("\n");
 			}
-
-			const FString MatName = GodotExportPrivate::EscapeJson(Material->GetName());
-			const FString TresEscaped = GodotExportPrivate::EscapeJson(TresPath);
-			Contents += FString::Printf(TEXT("\"%s\": {\n"), *MatName);
-			Contents += TEXT("\"use_external/enabled\": true,\n");
-			Contents += FString::Printf(TEXT("\"use_external/path\": \"%s\"\n"), *TresEscaped);
-			Contents += (Index + 1 < Materials.Num()) ? TEXT("},\n") : TEXT("}\n");
 		}
-		Contents += TEXT("}\n");
+		if (PhysicsNodeNames.Num() > 0)
+		{
+			Contents += TEXT("\"nodes\": {\n");
+			for (int32 Index = 0; Index < PhysicsNodeNames.Num(); ++Index)
+			{
+				const FString PathKey = GodotExportPrivate::EscapeJson(FString::Printf(TEXT("PATH:%s"), *PhysicsNodeNames[Index]));
+				Contents += FString::Printf(TEXT("\"%s\": {\n"), *PathKey);
+				Contents += TEXT("\"generate/physics\": true,\n");
+				Contents += TEXT("\"physics/shape_type\": 1\n");
+				Contents += (Index + 1 < PhysicsNodeNames.Num()) ? TEXT("},\n") : TEXT("}\n");
+			}
+			Contents += TEXT("}\n");
+		}
 		Contents += TEXT("}\n");
 	}
 
