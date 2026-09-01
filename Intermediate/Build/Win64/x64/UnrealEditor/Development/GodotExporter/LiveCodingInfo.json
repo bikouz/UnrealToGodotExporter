@@ -1,0 +1,19 @@
+{
+	"RemapUnityFiles": 
+	{
+		"Module.GodotExporter.cpp.obj": [
+			"GodotExportCommandlet.gen.cpp.obj",
+			"GodotExporter.init.gen.cpp.obj",
+			"GodotExportLibrary.gen.cpp.obj",
+			"GodotExportSettings.gen.cpp.obj",
+			"GodotExportTypes.gen.cpp.obj",
+			"PerModuleInline.gen.cpp.obj",
+			"GodotExportCommandlet.cpp.obj",
+			"GodotExporterModule.cpp.obj",
+			"GodotExportLibrary.cpp.obj",
+			"GodotExportPipeline.cpp.obj",
+			"GodotExportSettings.cpp.obj",
+			"SGodotExportWindow.cpp.obj"
+		]
+	}
+}

@@ -1,0 +1,32 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0.0",
+	"FriendlyName": "Godot Exporter",
+	"Description": "Export Unreal Engine assets to a Godot 4 project (glTF meshes, PNG textures, WAV audio, StandardMaterial3D, scenes and DataTables).",
+	"Category": "Editor",
+	"CreatedBy": "Downgrader",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EngineVersion": "5.8.0",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "GodotExporter",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "GLTFExporter",
+			"Enabled": true
+		}
+	]
+}

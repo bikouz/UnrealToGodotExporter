@@ -1,0 +1,14 @@
+"C:/Users/BIKOUZ-PC/Documents/Unreal Projects/Downgrader/Plugins/GodotExporter/Intermediate/Build/Win64/x64/UnrealEditor/Development/GodotExporter/Module.GodotExporter.cpp"
+@"C:/Users/BIKOUZ-PC/Documents/Unreal Projects/Downgrader/Plugins/GodotExporter/Intermediate/Build/Win64/x64/UnrealEditor/Development/GodotExporter/GodotExporter.Shared.rsp"
+/FI"C:/Users/BIKOUZ-PC/Documents/Unreal Projects/Downgrader/Intermediate/Build/Win64/x64/DowngraderEditor/Development/UnrealEd/SharedPCH.UnrealEd.Project.ValApi.ValExpApi.Cpp20.h"
+/FI"C:/Users/BIKOUZ-PC/Documents/Unreal Projects/Downgrader/Plugins/GodotExporter/Intermediate/Build/Win64/x64/UnrealEditor/Development/GodotExporter/Definitions.GodotExporter.h"
+/Yu"C:/Users/BIKOUZ-PC/Documents/Unreal Projects/Downgrader/Intermediate/Build/Win64/x64/DowngraderEditor/Development/UnrealEd/SharedPCH.UnrealEd.Project.ValApi.ValExpApi.Cpp20.h"
+/Fp"C:/Users/BIKOUZ-PC/Documents/Unreal Projects/Downgrader/Intermediate/Build/Win64/x64/DowngraderEditor/Development/UnrealEd/SharedPCH.UnrealEd.Project.ValApi.ValExpApi.Cpp20.h.pch"
+/Fo"C:/Users/BIKOUZ-PC/Documents/Unreal Projects/Downgrader/Plugins/GodotExporter/Intermediate/Build/Win64/x64/UnrealEditor/Development/GodotExporter/Module.GodotExporter.cpp.obj"
+/experimental:log "C:/Users/BIKOUZ-PC/Documents/Unreal Projects/Downgrader/Plugins/GodotExporter/Intermediate/Build/Win64/x64/UnrealEditor/Development/GodotExporter/Module.GodotExporter.cpp.sarif"
+/sourceDependencies "C:/Users/BIKOUZ-PC/Documents/Unreal Projects/Downgrader/Plugins/GodotExporter/Intermediate/Build/Win64/x64/UnrealEditor/Development/GodotExporter/Module.GodotExporter.cpp.dep.json"
+/nologo
+/TP
+/GR-
+/std:c++20
+/wd5054

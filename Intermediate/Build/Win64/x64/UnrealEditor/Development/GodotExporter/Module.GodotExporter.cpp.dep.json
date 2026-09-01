@@ -1,0 +1,30 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\godotexporter\\module.godotexporter.cpp",
+        "ProvidedModule": "",
+        "PCH": "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\intermediate\\build\\win64\\x64\\downgradereditor\\development\\unrealed\\sharedpch.unrealed.project.valapi.valexpapi.cpp20.h.pch",
+        "Includes": [
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\godotexporter\\definitions.godotexporter.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\godotexporter\\uht\\godotexportcommandlet.gen.cpp",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\source\\godotexporter\\private\\godotexportcommandlet.h",
+            "c:\\program files\\epic games\\ue_5.8\\engine\\source\\runtime\\engine\\classes\\commandlets\\commandlet.h",
+            "c:\\program files\\epic games\\ue_5.8\\engine\\intermediate\\build\\win64\\unrealeditor\\inc\\engine\\uht\\commandlet.generated.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\godotexporter\\uht\\godotexportcommandlet.generated.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\godotexporter\\uht\\godotexporter.init.gen.cpp",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\godotexporter\\uht\\godotexportlibrary.gen.cpp",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\source\\godotexporter\\public\\godotexportlibrary.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\source\\godotexporter\\public\\godotexporttypes.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\godotexporter\\uht\\godotexporttypes.generated.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\godotexporter\\uht\\godotexportlibrary.generated.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\godotexporter\\uht\\godotexportsettings.gen.cpp",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\source\\godotexporter\\public\\godotexportsettings.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\godotexporter\\uht\\godotexportsettings.generated.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\godotexporter\\uht\\godotexporttypes.gen.cpp",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\godotexporter\\permoduleinline.gen.cpp",
+            "c:\\program files\\epic games\\ue_5.8\\engine\\source\\runtime\\core\\public\\hal\\permoduleinline.inl"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}

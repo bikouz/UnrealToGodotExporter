@@ -1,0 +1,38 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\source\\godotexporter\\private\\godotexportpipeline.cpp",
+        "ProvidedModule": "",
+        "PCH": "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\intermediate\\build\\win64\\x64\\downgradereditor\\development\\unrealed\\sharedpch.unrealed.project.valapi.valexpapi.cpp20.h.pch",
+        "Includes": [
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\godotexporter\\definitions.godotexporter.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\source\\godotexporter\\public\\godotexportpipeline.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\source\\godotexporter\\public\\godotexporttypes.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\godotexporter\\uht\\godotexporttypes.generated.h",
+            "c:\\ue_downgrader\\engine\\source\\runtime\\assetregistry\\public\\assetregistry\\assetregistrymodule.h",
+            "c:\\ue_downgrader\\engine\\source\\runtime\\assetregistry\\public\\assetregistry\\iassetregistry.h",
+            "c:\\ue_downgrader\\engine\\source\\runtime\\coreuobject\\public\\misc\\assetregistryinterface.h",
+            "c:\\ue_downgrader\\engine\\intermediate\\build\\win64\\unrealeditor\\inc\\assetregistry\\uht\\iassetregistry.generated.h",
+            "c:\\ue_downgrader\\engine\\source\\developer\\desktopplatform\\public\\desktopplatformmodule.h",
+            "c:\\ue_downgrader\\engine\\source\\developer\\desktopplatform\\public\\idesktopplatform.h",
+            "c:\\ue_downgrader\\engine\\source\\editor\\unrealed\\public\\editordirectories.h",
+            "c:\\ue_downgrader\\engine\\source\\runtime\\engine\\classes\\editorframework\\assetimportdata.h",
+            "c:\\ue_downgrader\\engine\\source\\runtime\\coreuobject\\public\\uobject\\assetregistrytagscontext.h",
+            "c:\\ue_downgrader\\engine\\source\\runtime\\coreuobject\\public\\uobject\\cookenums.h",
+            "c:\\ue_downgrader\\engine\\intermediate\\build\\win64\\unrealeditor\\inc\\engine\\uht\\assetimportdata.generated.h",
+            "c:\\ue_downgrader\\engine\\plugins\\enterprise\\gltfexporter\\source\\gltfexporter\\public\\exporters\\gltfexporter.h",
+            "c:\\ue_downgrader\\engine\\source\\runtime\\engine\\classes\\exporters\\exporter.h",
+            "c:\\ue_downgrader\\engine\\intermediate\\build\\win64\\unrealeditor\\inc\\engine\\uht\\exporter.generated.h",
+            "c:\\ue_downgrader\\engine\\plugins\\enterprise\\gltfexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\gltfexporter\\uht\\gltfexporter.generated.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\source\\godotexporter\\public\\godotexportsettings.h",
+            "c:\\users\\bikouz-pc\\documents\\unreal projects\\downgrader\\plugins\\godotexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\godotexporter\\uht\\godotexportsettings.generated.h",
+            "c:\\ue_downgrader\\engine\\source\\runtime\\engine\\public\\imageutils.h",
+            "c:\\ue_downgrader\\engine\\plugins\\enterprise\\gltfexporter\\source\\gltfexporter\\public\\options\\gltfexportoptions.h",
+            "c:\\ue_downgrader\\engine\\plugins\\enterprise\\gltfexporter\\source\\gltfexporter\\public\\userdata\\gltfmaterialuserdata.h",
+            "c:\\ue_downgrader\\engine\\plugins\\enterprise\\gltfexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\gltfexporter\\uht\\gltfmaterialuserdata.generated.h",
+            "c:\\ue_downgrader\\engine\\plugins\\enterprise\\gltfexporter\\intermediate\\build\\win64\\unrealeditor\\inc\\gltfexporter\\uht\\gltfexportoptions.generated.h"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}
